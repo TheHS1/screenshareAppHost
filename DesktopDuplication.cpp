@@ -9,13 +9,25 @@
 
 #include "DisplayManager.h"
 #include "DuplicationManager.h"
+#include "H264Encoder2.h"
+#include "Preproc.h"
 #include "OutputManager.h"
 #include "ThreadManager.h"
+#include <mfapi.h>
+#include <fstream>
+
+#pragma comment(lib, "mfplat")
+#pragma comment(lib, "mfuuid")
 
 //
 // Globals
 //
 OUTPUTMANAGER OutMgr;
+const UINT32 VIDEO_WIDTH = 1920;
+const UINT32 VIDEO_HEIGHT = 1080;
+const UINT32 VIDEO_FPS = 30;
+H264Encoder2* encoder = NULL;
+INT64 rtStart = 0;
 
 // Below are lists of errors expect from Dxgi API calls when a transition event like mode change, PnpStop, PnpStart
 // desktop switch, TDR or session disconnect/reconnect. In all these cases we want the application to clean up the threads that process
@@ -140,6 +152,119 @@ void DYNAMIC_WAIT::Wait()
     m_WaitCountInCurrentBand++;
 }
 
+HRESULT InitializeTransform()
+{
+    HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    if (SUCCEEDED(hr)) {
+        HRESULT hr = MFStartup(MF_VERSION, 0);
+    }
+
+    if (SUCCEEDED(hr)) {
+        encoder = new H264Encoder2();
+    }
+
+    if (SUCCEEDED(hr)) {
+        hr = encoder->Initialize(1920, 1080);
+    }
+    return hr;
+}
+
+static HRESULT CreateMediaSample(IMFSample** ppSample, FRAME_DATA curData)
+{
+    HRESULT hr = S_OK;
+
+    IMFSample* pSample = NULL;
+    IMFMediaBuffer* pBuffer = NULL;
+
+    D3D11_TEXTURE2D_DESC desc;
+    ID3D11Device* device;
+    ID3D11DeviceContext* context;
+    ID3D11Texture2D* pTexture = NULL;
+
+    curData.Frame->GetDevice(&device);
+    device->GetImmediateContext(&context);
+    RGBToNV12 converter(device, context);
+
+    desc.Width = VIDEO_WIDTH;
+    desc.Height = VIDEO_HEIGHT;
+    desc.MipLevels = desc.ArraySize = 1;
+    desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_NV12;
+    desc.SampleDesc.Count = 1;
+    desc.SampleDesc.Quality = 0;
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.BindFlags = D3D11_BIND_RENDER_TARGET;
+    desc.CPUAccessFlags = 0;
+    desc.MiscFlags = 0;
+    hr = device->CreateTexture2D(&desc, NULL, &pTexture);
+
+    if (SUCCEEDED(hr)) {
+        hr = MFCreateSample(&pSample);
+    }
+    if (SUCCEEDED(hr)) {
+        hr = converter.Init();
+    }
+
+    if (SUCCEEDED(hr)) {
+        converter.Convert(curData.Frame, pTexture);
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        hr = MFCreateDXGISurfaceBuffer(__uuidof(ID3D11Texture2D), pTexture, 0, FALSE, &pBuffer);
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        hr = pSample->AddBuffer(pBuffer);
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        *ppSample = pSample;
+        (*ppSample)->AddRef();
+    }
+
+    SafeRelease(&pSample);
+    SafeRelease(&pBuffer);
+    SafeRelease(&pTexture);
+    return hr;
+}
+
+HRESULT WriteFrame(FRAME_DATA curData)
+{
+    HRESULT hr = S_OK;
+
+    IMFSample* pSample = NULL;
+    IMFSample* pSampleOut = NULL;
+    UINT64 rtDuration;
+
+    hr = MFFrameRateToAverageTimePerFrame(VIDEO_FPS, 1, &rtDuration);
+    hr = CreateMediaSample(&pSample, curData);
+    pSample->SetSampleDuration(rtDuration);
+    hr = pSample->SetSampleTime(rtStart);
+    rtStart += rtDuration;
+    hr = encoder->ProcessInput(pSample);
+    hr = encoder->ProcessOutput(&pSampleOut);
+    IMFMediaBuffer* outBuffer = NULL;
+    pSampleOut->GetBufferByIndex(0, &outBuffer);
+
+    BYTE* data;
+    DWORD length;
+
+    ofstream fout;
+    fout.open("file.h264", ios::binary | std::ios_base::app);
+
+    outBuffer->Lock(&data, NULL, &length);
+    fout << data;
+    fout.write((char*)data, length);
+    outBuffer->Unlock();
+    fout.close();
+    SafeRelease(&pSample);
+    SafeRelease(&pSampleOut);
+    return hr;
+}
+
 
 //
 // Program entry point
@@ -199,6 +324,7 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
         return 0;
     }
 
+    HRESULT hr = InitializeTransform();
     // Register class
     WNDCLASSEXW Wc;
     Wc.cbSize           = sizeof(WNDCLASSEXW);
@@ -348,6 +474,8 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
     CloseHandle(UnexpectedErrorEvent);
     CloseHandle(ExpectedErrorEvent);
     CloseHandle(TerminateThreadsEvent);
+    CoUninitialize();
+    MFShutdown();
 
     if (msg.message == WM_QUIT)
     {
@@ -559,6 +687,16 @@ DWORD WINAPI DDProc(_In_ void* Param)
             DuplMgr.DoneWithFrame();
             KeyMutex->ReleaseSync(1);
             break;
+        }
+ 
+        if (SUCCEEDED(hr))
+        {
+            // Send frames to the transformer
+            hr = WriteFrame(CurrentData);
+            if (FAILED(hr))
+            {
+                break;
+            }
         }
 
         // Release acquired keyed mutex
