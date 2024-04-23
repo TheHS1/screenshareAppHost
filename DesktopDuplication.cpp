@@ -12,9 +12,10 @@
 #include <windows.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <winuser.h>
 #include <stdlib.h>
 #include <stdio.h>
-
+#include <thread>
 
 // Need to link with Ws2_32.lib, Mswsock.lib, and Advapi32.lib
 #pragma comment (lib, "Ws2_32.lib")
@@ -37,6 +38,7 @@
 #include "ThreadManager.h"
 #include <mfapi.h>
 #include <fstream>
+#include <string>
 
 
 #pragma comment(lib, "mfplat")
@@ -51,6 +53,15 @@ const UINT32 VIDEO_HEIGHT = 1080;
 const UINT32 VIDEO_FPS = 30;
 H264Encoder2* encoder = NULL;
 INT64 rtStart = 0;
+
+WSADATA wsaData;
+SOCKET ConnectSocket = INVALID_SOCKET;
+struct addrinfo* result = NULL,
+    * ptr = NULL,
+    hints;
+char recvbuf[1024];
+int iResult;
+int recvbuflen = 1024;
 
 // Below are lists of errors expect from Dxgi API calls when a transition event like mode change, PnpStop, PnpStart
 // desktop switch, TDR or session disconnect/reconnect. In all these cases we want the application to clean up the threads that process
@@ -275,70 +286,7 @@ HRESULT WriteFrame(FRAME_DATA curData)
     BYTE* data;
     DWORD length;
 
-    ofstream fout;
-    fout.open("file.h264", ios::binary | std::ios_base::app);
-
-    outBuffer->Lock(&data, NULL, &length);
-    fout << data;
-    fout.write((char*)data, length);
-
-    //--------> Starts Here
-    WSADATA wsaData;
-    SOCKET ConnectSocket = INVALID_SOCKET;
-    struct addrinfo* result = NULL,
-        * ptr = NULL,
-        hints;
-    //const char *sendbuf = "this is a test";
-    char recvbuf[DEFAULT_BUFLEN];
-    int iResult;
-    int recvbuflen = DEFAULT_BUFLEN;
-    /*// Validate the parameters
-    if (argc != 2) {
-        printf("usage: %s server-name\n", argv[0]);
-        return 1;
-    }*/
-    // Initialize Winsock
-    iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
-    if (iResult != 0) {
-        printf("WSAStartup failed with error: %d\n", iResult);
-        return 1;
-    }
-    ZeroMemory(&hints, sizeof(hints));
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_protocol = IPPROTO_TCP;
-    // Resolve the server address and port
-    iResult = getaddrinfo("127.0.0.1", DEFAULT_PORT, &hints, &result);
-    if (iResult != 0) {
-        printf("getaddrinfo failed with error: %d\n", iResult);
-        WSACleanup();
-        return 1;
-    }
-    // Attempt to connect to an address until one succeeds
-    for (ptr = result; ptr != NULL; ptr = ptr->ai_next) {
-        // Create a SOCKET for connecting to server
-        ConnectSocket = socket(ptr->ai_family, ptr->ai_socktype,
-            ptr->ai_protocol);
-        if (ConnectSocket == INVALID_SOCKET) {
-            printf("socket failed with error: %ld\n", WSAGetLastError());
-            WSACleanup();
-            return 1;
-        }
-        // Connect to server.
-        iResult = connect(ConnectSocket, ptr->ai_addr, (int)ptr->ai_addrlen);
-        if (iResult == SOCKET_ERROR) {
-            closesocket(ConnectSocket);
-            ConnectSocket = INVALID_SOCKET;
-            continue;
-        }
-        break;
-    }
-    freeaddrinfo(result);
-    if (ConnectSocket == INVALID_SOCKET) {
-        printf("Unable to connect to server!\n");
-        WSACleanup();
-        return 1;
-    }
+    outBuffer->Lock(&data, NULL, &length); 
     // Send an initial buffer
     iResult = send(ConnectSocket, /*sendbuf*/(char*)data, /*(int)strlen(sendbuf)*/length, 0);
     if (iResult == SOCKET_ERROR) {
@@ -349,32 +297,15 @@ HRESULT WriteFrame(FRAME_DATA curData)
     }
     printf("Bytes Sent: %ld\n", iResult);
     // shutdown the connection since no more data will be sent
-    iResult = shutdown(ConnectSocket, SD_SEND);
+    //iResult = shutdown(ConnectSocket, SD_SEND);
     if (iResult == SOCKET_ERROR) {
         printf("shutdown failed with error: %d\n", WSAGetLastError());
         closesocket(ConnectSocket);
         WSACleanup();
         return 1;
     }
-    // Receive until the peer closes the connection
-    do {
-        iResult = recv(ConnectSocket, recvbuf, recvbuflen, 0);
-        if (iResult > 0)
-            printf("Bytes received: %d\n", iResult);
-        else if (iResult == 0)
-            printf("Connection closed\n");
-        else
-            printf("recv failed with error: %d\n", WSAGetLastError());
-    } while (iResult > 0);
-
-    // cleanup
-    closesocket(ConnectSocket);
-    WSACleanup();
-    //------> Ends Here
-
 
     outBuffer->Unlock();
-    fout.close();
     SafeRelease(&pSample);
     SafeRelease(&pSampleOut);
     return hr;
@@ -440,6 +371,49 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
     }
 
     HRESULT hr = InitializeTransform();
+    // Initialize Winsock
+    iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
+    if (iResult != 0) {
+        printf("WSAStartup failed with error: %d\n", iResult);
+        return 1;
+    }
+    ZeroMemory(&hints, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+    // Resolve the server address and port
+    iResult = getaddrinfo("10.66.66.3", DEFAULT_PORT, &hints, &result);
+    if (iResult != 0) {
+        printf("getaddrinfo failed with error: %d\n", iResult);
+        WSACleanup();
+        return 1;
+    }
+    // Attempt to connect to an address until one succeeds
+    for (ptr = result; ptr != NULL; ptr = ptr->ai_next) {
+        // Create a SOCKET for connecting to server
+        ConnectSocket = socket(ptr->ai_family, ptr->ai_socktype,
+            ptr->ai_protocol);
+        if (ConnectSocket == INVALID_SOCKET) {
+            printf("socket failed with error: %ld\n", WSAGetLastError());
+            WSACleanup();
+            return 1;
+        }
+        // Connect to server.
+        iResult = connect(ConnectSocket, ptr->ai_addr, (int)ptr->ai_addrlen);
+        if (iResult == SOCKET_ERROR) {
+            closesocket(ConnectSocket);
+            ConnectSocket = INVALID_SOCKET;
+            continue;
+        }
+        break;
+    }
+    freeaddrinfo(result);
+    if (ConnectSocket == INVALID_SOCKET) {
+        printf("Unable to connect to server!\n");
+        WSACleanup();
+        return 1;
+    }
+    
     // Register class
     WNDCLASSEXW Wc;
     Wc.cbSize           = sizeof(WNDCLASSEXW);
@@ -591,6 +565,8 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
     CloseHandle(TerminateThreadsEvent);
     CoUninitialize();
     MFShutdown();
+    closesocket(ConnectSocket);
+    WSACleanup();
 
     if (msg.message == WM_QUIT)
     {
@@ -845,7 +821,7 @@ Exit:
             SetEvent(TData->UnexpectedErrorEvent);
         }
     }
-
+    
     if (SharedSurf)
     {
         SharedSurf->Release();
@@ -859,6 +835,81 @@ Exit:
     }
 
     return 0;
+}
+
+//
+// Entry point for input thread
+//
+DWORD WINAPI InputProc(_In_ void* Param)
+{
+    UINT ok;
+    // Receive until the peer closes the connection
+    while (true) {
+        ZeroMemory(recvbuf, recvbuflen);
+        iResult = recv(ConnectSocket, recvbuf, recvbuflen, 0);
+        string output = recvbuf;
+        if (output[0] == '0') {
+            int numElements = ((output.length() - 1) * 2);
+            INPUT* inputs = new INPUT[2];
+            ZeroMemory(inputs, numElements);
+            for (int i = 0; i < numElements; i+=2) {
+                inputs[i].type = INPUT_KEYBOARD;
+                inputs[i].ki.wVk = 'A';
+                inputs[i + 1].type = INPUT_KEYBOARD;
+                inputs[i + 1].ki.wVk = 'A';
+                inputs[i + 1].ki.dwFlags = KEYEVENTF_KEYUP;
+            }
+            ok = SendInput(2, inputs, sizeof(INPUT));
+        }
+        if(output[0] == '1') {
+            INPUT* inputs = new INPUT[3];
+            inputs[0].type = INPUT_MOUSE;                                                       
+            inputs[1].type = INPUT_MOUSE;
+            inputs[2].type = INPUT_MOUSE;                                                                                                                                                                                    
+            string x;
+            int i = 1;
+            while (output[i] != 'a') {
+                x += output[i];
+                i++;
+            }
+            inputs[0].mi.dx = (int) (65535 * stof(x.c_str()));
+            inputs[1].mi.dx = 0;
+            inputs[2].mi.dy = 0;
+            i++;
+            x = ""; 
+            while (i < output.length()) {
+                x += output[i];
+                i++;
+            }
+            inputs[0].mi.dy = (int) (65535 * stof(x.c_str()));
+            inputs[0].mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
+            inputs[1].mi.dwFlags = MOUSEEVENTF_LEFTDOWN | MOUSEEVENTF_ABSOLUTE;
+            inputs[2].mi.dwFlags = MOUSEEVENTF_LEFTUP | MOUSEEVENTF_ABSOLUTE;
+            SendInput(1, inputs, sizeof(INPUT));
+        }
+        else if (output[0] == '2') {
+            INPUT* inputs = new INPUT[2];
+            inputs[0].type = INPUT_MOUSE;
+            inputs[1].type = INPUT_MOUSE;
+            inputs[0].mi.dx = 0;
+            inputs[1].mi.dx = 0;
+            inputs[0].mi.dy = 0;
+            inputs[1].mi.dy = 0;
+            inputs[0].mi.dwFlags = MOUSEEVENTF_LEFTDOWN | MOUSEEVENTF_ABSOLUTE;
+            inputs[1].mi.dwFlags = MOUSEEVENTF_LEFTUP | MOUSEEVENTF_ABSOLUTE;
+            SendInput(2, inputs, sizeof(INPUT));
+        }
+        
+        
+        if (iResult > 0) {  
+            printf("Bytes received: %d\n", iResult);
+            //SendInput(sizeof(inputs), inputs, sizeof(INPUT));
+        }
+        else if (iResult == 0)
+            printf("Connection closed\n");
+        else
+            printf("recv failed with error: %d\n", WSAGetLastError());
+    }
 }
 
 _Post_satisfies_(return != DUPL_RETURN_SUCCESS)

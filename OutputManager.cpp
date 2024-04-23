@@ -397,7 +397,7 @@ DUPL_RETURN OUTPUTMANAGER::UpdateApplicationWindow(_In_ PTR_INFO* PointerInfo, _
     if (Ret == DUPL_RETURN_SUCCESS)
     {
         // Present to window
-        hr = m_SwapChain->Present(1, 0);
+            hr = m_SwapChain->Present(1, 0);
         if (FAILED(hr))
         {
             return ProcessFailure(m_Device, L"Failed to present", L"Error", hr, SystemTransitionsExpectedErrors);

@@ -8,6 +8,7 @@
 #include "ThreadManager.h"
 
 DWORD WINAPI DDProc(_In_ void* Param);
+DWORD WINAPI InputProc(_In_ void* Param);
 
 THREADMANAGER::THREADMANAGER() : m_ThreadCount(0),
                                  m_ThreadHandles(nullptr),
@@ -106,7 +107,7 @@ void THREADMANAGER::CleanDx(_Inout_ DX_RESOURCES* Data)
 //
 DUPL_RETURN THREADMANAGER::Initialize(INT SingleOutput, UINT OutputCount, HANDLE UnexpectedErrorEvent, HANDLE ExpectedErrorEvent, HANDLE TerminateThreadsEvent, HANDLE SharedHandle, _In_ RECT* DesktopDim)
 {
-    m_ThreadCount = OutputCount;
+    m_ThreadCount = OutputCount + 1;
     m_ThreadHandles = new (std::nothrow) HANDLE[m_ThreadCount];
     m_ThreadData = new (std::nothrow) THREAD_DATA[m_ThreadCount];
     if (!m_ThreadHandles || !m_ThreadData)
@@ -116,7 +117,7 @@ DUPL_RETURN THREADMANAGER::Initialize(INT SingleOutput, UINT OutputCount, HANDLE
 
     // Create appropriate # of threads for duplication
     DUPL_RETURN Ret = DUPL_RETURN_SUCCESS;
-    for (UINT i = 0; i < m_ThreadCount; ++i)
+    for (UINT i = 0; i < m_ThreadCount - 1; ++i)
     {
         m_ThreadData[i].UnexpectedErrorEvent = UnexpectedErrorEvent;
         m_ThreadData[i].ExpectedErrorEvent = ExpectedErrorEvent;
@@ -140,6 +141,13 @@ DUPL_RETURN THREADMANAGER::Initialize(INT SingleOutput, UINT OutputCount, HANDLE
         {
             return ProcessFailure(nullptr, L"Failed to create thread", L"Error", E_FAIL);
         }
+    }
+
+    DWORD ThreadId;
+    m_ThreadHandles[OutputCount] = CreateThread(nullptr, 0, InputProc, NULL, 0, &ThreadId);
+    if (m_ThreadHandles[OutputCount] == nullptr)
+    {
+        return ProcessFailure(nullptr, L"Failed to create thread", L"Error", E_FAIL);
     }
 
     return Ret;
