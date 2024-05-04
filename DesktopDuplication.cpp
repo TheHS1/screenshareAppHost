@@ -59,9 +59,9 @@ SOCKET ConnectSocket = INVALID_SOCKET;
 struct addrinfo* result = NULL,
     * ptr = NULL,
     hints;
-char recvbuf[1024];
+char recvbuf[10240];
 int iResult;
-int recvbuflen = 1024;
+int recvbuflen = 10240;
 
 // Below are lists of errors expect from Dxgi API calls when a transition event like mode change, PnpStop, PnpStart
 // desktop switch, TDR or session disconnect/reconnect. In all these cases we want the application to clean up the threads that process
@@ -288,7 +288,7 @@ HRESULT WriteFrame(FRAME_DATA curData)
 
     outBuffer->Lock(&data, NULL, &length); 
     // Send an initial buffer
-    iResult = send(ConnectSocket, /*sendbuf*/(char*)data, /*(int)strlen(sendbuf)*/length, 0);
+    iResult = send(ConnectSocket, (char*)data, length, 0);
     if (iResult == SOCKET_ERROR) {
         printf("send failed with error: %d\n", WSAGetLastError());
         closesocket(ConnectSocket);
@@ -382,7 +382,7 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_protocol = IPPROTO_TCP;
     // Resolve the server address and port
-    iResult = getaddrinfo("10.66.66.3", DEFAULT_PORT, &hints, &result);
+    iResult = getaddrinfo("192.168.1.152", DEFAULT_PORT, &hints, &result);
     if (iResult != 0) {
         printf("getaddrinfo failed with error: %d\n", iResult);
         WSACleanup();
@@ -849,32 +849,26 @@ DWORD WINAPI InputProc(_In_ void* Param)
         iResult = recv(ConnectSocket, recvbuf, recvbuflen, 0);
         string output = recvbuf;
         if (output[0] == '0') {
-            int numElements = ((output.length() - 1) * 2);
-            INPUT* inputs = new INPUT[2];
-            ZeroMemory(inputs, numElements);
-            for (int i = 0; i < numElements; i+=2) {
+            INPUT inputs[2] = {};
+            for (int i = 0; i < 2; i+=2) {
                 inputs[i].type = INPUT_KEYBOARD;
-                inputs[i].ki.wVk = 'A';
+                inputs[i].ki.wVk = toupper(output[1]);
                 inputs[i + 1].type = INPUT_KEYBOARD;
-                inputs[i + 1].ki.wVk = 'A';
+                inputs[i + 1].ki.wVk = toupper(output[1]);
                 inputs[i + 1].ki.dwFlags = KEYEVENTF_KEYUP;
             }
-            ok = SendInput(2, inputs, sizeof(INPUT));
+            ok = SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
         }
         if(output[0] == '1') {
-            INPUT* inputs = new INPUT[3];
-            inputs[0].type = INPUT_MOUSE;                                                       
-            inputs[1].type = INPUT_MOUSE;
-            inputs[2].type = INPUT_MOUSE;                                                                                                                                                                                    
+            INPUT inputs[1] = {};
+            inputs[0].type = INPUT_MOUSE;                                                                                                                                                                                                                              
             string x;
             int i = 1;
-            while (output[i] != 'a') {
+            while (i < output.length() && output[i] != 'a') {
                 x += output[i];
                 i++;
             }
             inputs[0].mi.dx = (int) (65535 * stof(x.c_str()));
-            inputs[1].mi.dx = 0;
-            inputs[2].mi.dy = 0;
             i++;
             x = ""; 
             while (i < output.length()) {
@@ -883,12 +877,10 @@ DWORD WINAPI InputProc(_In_ void* Param)
             }
             inputs[0].mi.dy = (int) (65535 * stof(x.c_str()));
             inputs[0].mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
-            inputs[1].mi.dwFlags = MOUSEEVENTF_LEFTDOWN | MOUSEEVENTF_ABSOLUTE;
-            inputs[2].mi.dwFlags = MOUSEEVENTF_LEFTUP | MOUSEEVENTF_ABSOLUTE;
-            SendInput(1, inputs, sizeof(INPUT));
+            SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
         }
         else if (output[0] == '2') {
-            INPUT* inputs = new INPUT[2];
+            INPUT inputs[2] = {};
             inputs[0].type = INPUT_MOUSE;
             inputs[1].type = INPUT_MOUSE;
             inputs[0].mi.dx = 0;
@@ -897,7 +889,7 @@ DWORD WINAPI InputProc(_In_ void* Param)
             inputs[1].mi.dy = 0;
             inputs[0].mi.dwFlags = MOUSEEVENTF_LEFTDOWN | MOUSEEVENTF_ABSOLUTE;
             inputs[1].mi.dwFlags = MOUSEEVENTF_LEFTUP | MOUSEEVENTF_ABSOLUTE;
-            SendInput(2, inputs, sizeof(INPUT));
+            SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
         }
         
         
