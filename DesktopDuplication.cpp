@@ -382,7 +382,7 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_protocol = IPPROTO_TCP;
     // Resolve the server address and port
-    iResult = getaddrinfo("192.168.1.152", DEFAULT_PORT, &hints, &result);
+    iResult = getaddrinfo("192.168.1.166", DEFAULT_PORT, &hints, &result);
     if (iResult != 0) {
         printf("getaddrinfo failed with error: %d\n", iResult);
         WSACleanup();
@@ -842,9 +842,9 @@ Exit:
 //
 DWORD WINAPI InputProc(_In_ void* Param)
 {
-    UINT ok;
+    THREAD_DATA* TData = reinterpret_cast<THREAD_DATA*>(Param);
     // Receive until the peer closes the connection
-    while (true) {
+    while ((WaitForSingleObjectEx(TData->TerminateThreadsEvent, 0, FALSE) == WAIT_TIMEOUT)) {
         ZeroMemory(recvbuf, recvbuflen);
         iResult = recv(ConnectSocket, recvbuf, recvbuflen, 0);
         string output = recvbuf;
@@ -857,7 +857,7 @@ DWORD WINAPI InputProc(_In_ void* Param)
                 inputs[i + 1].ki.wVk = toupper(output[1]);
                 inputs[i + 1].ki.dwFlags = KEYEVENTF_KEYUP;
             }
-            ok = SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
+            SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
         }
         if(output[0] == '1') {
             INPUT inputs[1] = {};
@@ -902,6 +902,7 @@ DWORD WINAPI InputProc(_In_ void* Param)
         else
             printf("recv failed with error: %d\n", WSAGetLastError());
     }
+    return 0;
 }
 
 _Post_satisfies_(return != DUPL_RETURN_SUCCESS)
