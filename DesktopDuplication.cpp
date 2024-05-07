@@ -290,16 +290,14 @@ HRESULT WriteFrame(FRAME_DATA curData)
     // Send an initial buffer
     iResult = send(ConnectSocket, (char*)data, length, 0);
     if (iResult == SOCKET_ERROR) {
-        printf("send failed with error: %d\n", WSAGetLastError());
+        DisplayMsg(L"Send failed with error \n", L"Send Fail", E_FAIL);
         closesocket(ConnectSocket);
         WSACleanup();
         return 1;
     }
-    printf("Bytes Sent: %ld\n", iResult);
-    // shutdown the connection since no more data will be sent
-    //iResult = shutdown(ConnectSocket, SD_SEND);
+
     if (iResult == SOCKET_ERROR) {
-        printf("shutdown failed with error: %d\n", WSAGetLastError());
+        DisplayMsg(L"Shutdown failed with error: \n", L"Shutdown Fail", E_FAIL);
         closesocket(ConnectSocket);
         WSACleanup();
         return 1;
@@ -437,7 +435,7 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
     // Create window
     RECT WindowRect = {0, 0, 800, 600};
     AdjustWindowRect(&WindowRect, WS_OVERLAPPEDWINDOW, FALSE);
-    WindowHandle = CreateWindowW(L"ddasample", L"DXGI desktop duplication sample",
+    WindowHandle = CreateWindowW(L"ddasample", L"Remote Desktop App",
                            WS_OVERLAPPEDWINDOW,
                            0, 0,
                            WindowRect.right - WindowRect.left, WindowRect.bottom - WindowRect.top,
@@ -880,15 +878,32 @@ DWORD WINAPI InputProc(_In_ void* Param)
             SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
         }
         else if (output[0] == '2') {
-            INPUT inputs[2] = {};
+            INPUT inputs[1] = {};
             inputs[0].type = INPUT_MOUSE;
-            inputs[1].type = INPUT_MOUSE;
             inputs[0].mi.dx = 0;
-            inputs[1].mi.dx = 0;
             inputs[0].mi.dy = 0;
-            inputs[1].mi.dy = 0;
             inputs[0].mi.dwFlags = MOUSEEVENTF_LEFTDOWN | MOUSEEVENTF_ABSOLUTE;
-            inputs[1].mi.dwFlags = MOUSEEVENTF_LEFTUP | MOUSEEVENTF_ABSOLUTE;
+            SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
+        } else if (output[0] == '3') {
+            INPUT inputs[1] = {};
+            inputs[0].type = INPUT_MOUSE;
+            inputs[0].mi.dx = 0;
+            inputs[0].mi.dy = 0;
+            inputs[0].mi.dwFlags = MOUSEEVENTF_RIGHTDOWN | MOUSEEVENTF_ABSOLUTE;
+            SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
+        } else if (output[0] == '4') {
+            INPUT inputs[1] = {};
+            inputs[0].type = INPUT_MOUSE;
+            inputs[0].mi.dx = 0;
+            inputs[0].mi.dy = 0;
+            inputs[0].mi.dwFlags = MOUSEEVENTF_LEFTUP | MOUSEEVENTF_ABSOLUTE;
+            SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
+        } else if (output[0] == '5') {
+            INPUT inputs[1] = {};
+            inputs[0].type = INPUT_MOUSE;
+            inputs[0].mi.dx = 0;
+            inputs[0].mi.dy = 0;
+            inputs[0].mi.dwFlags = MOUSEEVENTF_RIGHTUP | MOUSEEVENTF_ABSOLUTE;
             SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
         }
         
