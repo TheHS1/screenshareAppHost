@@ -55,13 +55,13 @@ H264Encoder2* encoder = NULL;
 INT64 rtStart = 0;
 
 WSADATA wsaData;
-SOCKET ConnectSocket = INVALID_SOCKET;
-struct addrinfo* result = NULL,
-    * ptr = NULL,
-    hints;
-char recvbuf[10240];
+SOCKET server = INVALID_SOCKET;
+SOCKET ClientSocket = INVALID_SOCKET;
+struct addrinfo* result = NULL;
+struct addrinfo hints;
 int iResult;
 int recvbuflen = 10240;
+char recvbuf[10240];
 
 // Below are lists of errors expect from Dxgi API calls when a transition event like mode change, PnpStop, PnpStart
 // desktop switch, TDR or session disconnect/reconnect. In all these cases we want the application to clean up the threads that process
@@ -288,17 +288,17 @@ HRESULT WriteFrame(FRAME_DATA curData)
 
     outBuffer->Lock(&data, NULL, &length); 
     // Send an initial buffer
-    iResult = send(ConnectSocket, (char*)data, length, 0);
+    iResult = send(ClientSocket, (char*)data, length, 0);
     if (iResult == SOCKET_ERROR) {
         DisplayMsg(L"Send failed with error \n", L"Send Fail", E_FAIL);
-        closesocket(ConnectSocket);
+        closesocket(ClientSocket);
         WSACleanup();
         return 1;
     }
 
     if (iResult == SOCKET_ERROR) {
         DisplayMsg(L"Shutdown failed with error: \n", L"Shutdown Fail", E_FAIL);
-        closesocket(ConnectSocket);
+        closesocket(ClientSocket);
         WSACleanup();
         return 1;
     }
@@ -376,38 +376,38 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
         return 1;
     }
     ZeroMemory(&hints, sizeof(hints));
-    hints.ai_family = AF_UNSPEC;
+    hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_protocol = IPPROTO_TCP;
+    hints.ai_flags = AI_PASSIVE;
     // Resolve the server address and port
-    iResult = getaddrinfo("192.168.1.166", DEFAULT_PORT, &hints, &result);
+    iResult = getaddrinfo(NULL, DEFAULT_PORT, &hints, &result);
     if (iResult != 0) {
         printf("getaddrinfo failed with error: %d\n", iResult);
         WSACleanup();
         return 1;
     }
-    // Attempt to connect to an address until one succeeds
-    for (ptr = result; ptr != NULL; ptr = ptr->ai_next) {
-        // Create a SOCKET for connecting to server
-        ConnectSocket = socket(ptr->ai_family, ptr->ai_socktype,
-            ptr->ai_protocol);
-        if (ConnectSocket == INVALID_SOCKET) {
-            printf("socket failed with error: %ld\n", WSAGetLastError());
-            WSACleanup();
-            return 1;
-        }
-        // Connect to server.
-        iResult = connect(ConnectSocket, ptr->ai_addr, (int)ptr->ai_addrlen);
-        if (iResult == SOCKET_ERROR) {
-            closesocket(ConnectSocket);
-            ConnectSocket = INVALID_SOCKET;
-            continue;
-        }
-        break;
+    
+    server = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
+    if (server == INVALID_SOCKET) {
+        freeaddrinfo(result);
+        WSACleanup();
+        return 1;
     }
+
     freeaddrinfo(result);
-    if (ConnectSocket == INVALID_SOCKET) {
-        printf("Unable to connect to server!\n");
+
+    if (iResult == SOCKET_ERROR) {
+        closesocket(server);
+        WSACleanup();
+        return 1;
+    }
+
+    while (ClientSocket == INVALID_SOCKET) {
+        ClientSocket = accept(server, NULL, NULL);
+    }
+    if (ClientSocket == INVALID_SOCKET) {
+        closesocket(server);
         WSACleanup();
         return 1;
     }
@@ -563,7 +563,8 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
     CloseHandle(TerminateThreadsEvent);
     CoUninitialize();
     MFShutdown();
-    closesocket(ConnectSocket);
+    closesocket(ClientSocket);
+    closesocket(server);
     WSACleanup();
 
     if (msg.message == WM_QUIT)
@@ -844,7 +845,7 @@ DWORD WINAPI InputProc(_In_ void* Param)
     // Receive until the peer closes the connection
     while ((WaitForSingleObjectEx(TData->TerminateThreadsEvent, 0, FALSE) == WAIT_TIMEOUT)) {
         ZeroMemory(recvbuf, recvbuflen);
-        iResult = recv(ConnectSocket, recvbuf, recvbuflen, 0);
+        iResult = recv(ClientSocket, recvbuf, recvbuflen, 0);
         string output = recvbuf;
         if (output[0] == '0') {
             INPUT inputs[2] = {};
