@@ -49,7 +49,7 @@ void THREADMANAGER::Clean()
 
     if (m_ThreadData)
     {
-        for (UINT i = 0; i < m_ThreadCount; ++i)
+        for (UINT i = 0; i < m_ThreadCount - 1; ++i)
         {
             CleanDx(&m_ThreadData[i].DxRes);
         }
@@ -144,7 +144,8 @@ DUPL_RETURN THREADMANAGER::Initialize(INT SingleOutput, UINT OutputCount, HANDLE
     }
 
     DWORD ThreadId;
-    m_ThreadHandles[OutputCount] = CreateThread(nullptr, 0, InputProc, NULL, 0, &ThreadId);
+    m_ThreadData[OutputCount].TerminateThreadsEvent = TerminateThreadsEvent;
+    m_ThreadHandles[OutputCount] = CreateThread(nullptr, 0, InputProc, &m_ThreadData[OutputCount], 0, &ThreadId);
     if (m_ThreadHandles[OutputCount] == nullptr)
     {
         return ProcessFailure(nullptr, L"Failed to create thread", L"Error", E_FAIL);
