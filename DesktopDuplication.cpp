@@ -289,6 +289,8 @@ HRESULT WriteFrame(FRAME_DATA curData)
         }
 
         outBuffer->Unlock();
+    } else {
+        InitializeTransform();
     }
     SafeRelease(&pSample);
     SafeRelease(&pSampleOut);
@@ -836,17 +838,26 @@ DWORD WINAPI InputProc(_In_ void* Param)
     TIMEVAL sockWait = {};
     sockWait.tv_sec = 1;
     SOCKET temp = INVALID_SOCKET;
+    bool haveClient = false;
     while ((WaitForSingleObjectEx(TData->TerminateThreadsEvent, 0, FALSE) == WAIT_TIMEOUT)) {
         //while (temp == INVALID_SOCKET && (WaitForSingleObjectEx(TData->TerminateThreadsEvent, 0, FALSE) == WAIT_TIMEOUT)) {
         //    select(NULL, NULL, nullptr, nullptr, &sockWait);
+        while (!haveClient) {
             temp = accept(server, NULL, NULL);
+            Sleep(100);
+            if (temp != INVALID_SOCKET) {
+                haveClient = true;
+            }
+        }
         //}
         if (server != INVALID_SOCKET && DisplayConfirmation(L"A user has requested to join this session.\n Allow connection?", L"Connection Request") != IDYES) {
             closesocket(temp);
             temp = INVALID_SOCKET;
+            haveClient = false;
         } else {
             ClientSocket = temp;
             temp = INVALID_SOCKET;
+            haveClient = true;
         }
         while (ClientSocket != INVALID_SOCKET && (WaitForSingleObjectEx(TData->TerminateThreadsEvent, 0, FALSE) == WAIT_TIMEOUT)) {
             ZeroMemory(recvbuf, recvbuflen);
@@ -854,7 +865,7 @@ DWORD WINAPI InputProc(_In_ void* Param)
             if (iResult <= 0) {
                 closesocket(ClientSocket);
                 ClientSocket = INVALID_SOCKET;
-                InitializeTransform();
+                haveClient = false;
                 break;
             }
             string output = recvbuf;
