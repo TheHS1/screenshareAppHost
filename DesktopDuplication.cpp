@@ -843,19 +843,20 @@ DWORD WINAPI InputProc(_In_ void* Param)
 {
     THREAD_DATA* TData = reinterpret_cast<THREAD_DATA*>(Param);
     // Receive until the peer closes the connection
+    string output;
     while ((WaitForSingleObjectEx(TData->TerminateThreadsEvent, 0, FALSE) == WAIT_TIMEOUT)) {
         ZeroMemory(recvbuf, recvbuflen);
+<<<<<<< Updated upstream
         iResult = recv(ClientSocket, recvbuf, recvbuflen, 0);
         string output = recvbuf;
+=======
+        iResult = recv(ConnectSocket, recvbuf, recvbuflen, 0);
+        output = recvbuf;
+>>>>>>> Stashed changes
         if (output[0] == '0') {
-            INPUT inputs[2] = {};
-            for (int i = 0; i < 2; i+=2) {
-                inputs[i].type = INPUT_KEYBOARD;
-                inputs[i].ki.wVk = toupper(output[1]);
-                inputs[i + 1].type = INPUT_KEYBOARD;
-                inputs[i + 1].ki.wVk = toupper(output[1]);
-                inputs[i + 1].ki.dwFlags = KEYEVENTF_KEYUP;
-            }
+            INPUT inputs[1] = {};
+            inputs[0].type = INPUT_KEYBOARD;
+            inputs[0].ki.wVk = toupper(output[1]);
             SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
         }
         if(output[0] == '1') {
@@ -905,6 +906,18 @@ DWORD WINAPI InputProc(_In_ void* Param)
             inputs[0].mi.dx = 0;
             inputs[0].mi.dy = 0;
             inputs[0].mi.dwFlags = MOUSEEVENTF_RIGHTUP | MOUSEEVENTF_ABSOLUTE;
+            SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
+        } else if (output[0] == '6') {
+            INPUT inputs[1] = {};
+            inputs[0].type = INPUT_KEYBOARD;
+            inputs[0].ki.dwFlags = KEYEVENTF_EXTENDEDKEY;
+            inputs[0].ki.wVk = VK_LSHIFT;
+            SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
+        } else if (output[0] == '7') {
+            INPUT inputs[1] = {};
+            inputs[0].type = INPUT_KEYBOARD;
+            inputs[0].ki.dwFlags = KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY;
+            inputs[0].ki.wVk = VK_LSHIFT;
             SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
         }
         
