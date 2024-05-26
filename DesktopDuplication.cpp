@@ -6,7 +6,6 @@
 // Copyright (c) Microsoft Corporation. All rights reserved
 
 
-//------->changes starts here
 #define WIN32_LEAN_AND_MEAN //inside windows.h winsock.h include is ommitted
 //winsock api add ons
 #include <windows.h>
@@ -25,8 +24,6 @@
 
 #define DEFAULT_BUFLEN 512
 #define DEFAULT_PORT "8080"
-//------->changes ends here
-
 
 #include <limits.h>
 
@@ -39,7 +36,6 @@
 #include <mfapi.h>
 #include <fstream>
 #include <string>
-
 
 #pragma comment(lib, "mfplat")
 #pragma comment(lib, "mfuuid")
@@ -56,7 +52,8 @@ INT64 rtStart = 0;
 
 WSADATA wsaData;
 SOCKET server = INVALID_SOCKET;
-SOCKET ClientSocket = INVALID_SOCKET;
+fd_set activeFdSet, readFdSet;
+SOCKET socketsArray[2] = { INVALID_SOCKET };
 struct addrinfo* result = NULL;
 struct addrinfo hints;
 int iResult;
@@ -195,7 +192,7 @@ HRESULT InitializeTransform()
     return hr;
 }
 
-static HRESULT CreateMediaSample(IMFSample** ppSample, FRAME_DATA curData)
+static HRESULT CreateMediaSample(IMFSample** ppSample, ID3D11Texture2D* frame)
 {
     HRESULT hr = S_OK;
 
@@ -207,7 +204,7 @@ static HRESULT CreateMediaSample(IMFSample** ppSample, FRAME_DATA curData)
     ID3D11DeviceContext* context;
     ID3D11Texture2D* pTexture = NULL;
 
-    curData.Frame->GetDevice(&device);
+    frame->GetDevice(&device);
     device->GetImmediateContext(&context);
     RGBToNV12 converter(device, context);
 
@@ -232,7 +229,7 @@ static HRESULT CreateMediaSample(IMFSample** ppSample, FRAME_DATA curData)
     }
 
     if (SUCCEEDED(hr)) {
-        converter.Convert(curData.Frame, pTexture);
+        converter.Convert(frame, pTexture);
     }
 
     if (SUCCEEDED(hr))
@@ -257,40 +254,45 @@ static HRESULT CreateMediaSample(IMFSample** ppSample, FRAME_DATA curData)
     return hr;
 }
 
-HRESULT WriteFrame(FRAME_DATA curData)
+HRESULT WriteFrame(ID3D11Texture2D* frame)
 {
     HRESULT hr = S_OK;
 
     IMFSample* pSample = NULL;
     IMFSample* pSampleOut = NULL;
     UINT64 rtDuration;
-    if (ClientSocket != INVALID_SOCKET) {
+    if (socketsArray[1] != INVALID_SOCKET) {
         hr = MFFrameRateToAverageTimePerFrame(VIDEO_FPS, 1, &rtDuration);
-        hr = CreateMediaSample(&pSample, curData);
+        hr = CreateMediaSample(&pSample, frame);
         pSample->SetSampleDuration(rtDuration);
         hr = pSample->SetSampleTime(rtStart);
         rtStart += rtDuration;
         hr = encoder->ProcessInput(pSample);
+        if (SUCCEEDED(hr)) {
         hr = encoder->ProcessOutput(&pSampleOut);
+        }
         IMFMediaBuffer* outBuffer = NULL;
-        pSampleOut->GetBufferByIndex(0, &outBuffer);
+        if (SUCCEEDED(hr)) {
+            hr = pSampleOut->GetBufferByIndex(0, &outBuffer);
+        }
 
+        if (SUCCEEDED(hr)) {
         BYTE* data;
         DWORD length;
-
         outBuffer->Lock(&data, NULL, &length);
         // Send an initial buffer
-        iResult = send(ClientSocket, (char*)data, length, 0);
+            iResult = send(socketsArray[1], (char*)data, length, 0);
         if (iResult == SOCKET_ERROR) {
             //DisplayMsg(L"Send failed with error \n", L"Send Fail", E_FAIL);
-            closesocket(ClientSocket);
-            WSACleanup();
+                closesocket(socketsArray[1]);
+                FD_CLR(socketsArray[1], &activeFdSet);
+                socketsArray[1] = INVALID_SOCKET;
             return 1;
         }
 
         outBuffer->Unlock();
-    } else {
-        InitializeTransform();
+    }
+
     }
     SafeRelease(&pSample);
     SafeRelease(&pSampleOut);
@@ -401,6 +403,11 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
         WSACleanup();
         return 1;
     }
+    
+    FD_ZERO(&activeFdSet);
+    FD_SET(server, &activeFdSet);
+    socketsArray[0] = server;
+    socketsArray[1] = INVALID_SOCKET;
     
     // Register class
     WNDCLASSEXW Wc;
@@ -555,7 +562,7 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
     CloseHandle(TerminateThreadsEvent);
     CoUninitialize();
     MFShutdown();
-    closesocket(ClientSocket);
+    closesocket(socketsArray[1]);
     WSACleanup();
 
     if (msg.message == WM_QUIT)
@@ -773,7 +780,7 @@ DWORD WINAPI DDProc(_In_ void* Param)
         if (SUCCEEDED(hr))
         {
             // Send frames to the transformer
-            hr = WriteFrame(CurrentData);
+            hr = WriteFrame(SharedSurf);
             if (FAILED(hr))
             {
                 break;
@@ -835,38 +842,31 @@ DWORD WINAPI InputProc(_In_ void* Param)
     THREAD_DATA* TData = reinterpret_cast<THREAD_DATA*>(Param);
     // Receive until the peer closes the connection
     string output;
-    TIMEVAL sockWait = {};
-    sockWait.tv_sec = 1;
-    SOCKET temp = INVALID_SOCKET;
     bool haveClient = false;
     while ((WaitForSingleObjectEx(TData->TerminateThreadsEvent, 0, FALSE) == WAIT_TIMEOUT)) {
-        //while (temp == INVALID_SOCKET && (WaitForSingleObjectEx(TData->TerminateThreadsEvent, 0, FALSE) == WAIT_TIMEOUT)) {
-        //    select(NULL, NULL, nullptr, nullptr, &sockWait);
-        while (!haveClient) {
-            temp = accept(server, NULL, NULL);
-            Sleep(100);
-            if (temp != INVALID_SOCKET) {
-                haveClient = true;
-            }
-        }
-        //}
+        readFdSet = activeFdSet;
+        int numReady = select(FD_SETSIZE, &readFdSet, NULL, NULL, NULL);
+        
+        if (numReady > 0) {
+            for (int i = 0; i < 2; i++) {
+                if (FD_ISSET(socketsArray[i], &readFdSet) && socketsArray[i] == server) {
         if (server != INVALID_SOCKET && DisplayConfirmation(L"A user has requested to join this session.\n Allow connection?", L"Connection Request") != IDYES) {
-            closesocket(temp);
-            temp = INVALID_SOCKET;
             haveClient = false;
-        } else {
-            ClientSocket = temp;
-            temp = INVALID_SOCKET;
+                    }
+                    else {
             haveClient = true;
+                        socketsArray[1] = accept(server, NULL, NULL);
+                        encoder->Flush();
+                        FD_SET(socketsArray[1], &activeFdSet);
         }
-        while (ClientSocket != INVALID_SOCKET && (WaitForSingleObjectEx(TData->TerminateThreadsEvent, 0, FALSE) == WAIT_TIMEOUT)) {
+                } else if (FD_ISSET(socketsArray[i], &readFdSet)) {
             ZeroMemory(recvbuf, recvbuflen);
-            iResult = recv(ClientSocket, recvbuf, recvbuflen, 0);
+                    iResult = recv(socketsArray[i], recvbuf, recvbuflen, 0);
             if (iResult <= 0) {
-                closesocket(ClientSocket);
-                ClientSocket = INVALID_SOCKET;
+                        closesocket(socketsArray[i]);
+                        FD_CLR(socketsArray[i], &activeFdSet);
+                        socketsArray[i] = INVALID_SOCKET;
                 haveClient = false;
-                break;
             }
             string output = recvbuf;
             if (output[0] == '0') {
@@ -941,7 +941,17 @@ DWORD WINAPI InputProc(_In_ void* Param)
                 inputs[0].ki.wVk = VK_LSHIFT;
                 SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
             }
+                    
+                }
+            }
         }
+        else {
+            string str = to_string(WSAGetLastError()) + "\n";
+            wstring temp = wstring(str.begin(), str.end());
+            OutputDebugString(temp.c_str());
+        }
+        
+        
     }
     return 0;
 }

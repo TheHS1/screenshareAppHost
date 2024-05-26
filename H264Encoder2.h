@@ -45,6 +45,7 @@ public:
     HRESULT Initialize(const int, const int);
     HRESULT ProcessInput(IMFSample* pSample);
     HRESULT ProcessOutput(IMFSample** ppSample);
+    HRESULT Flush();
 
 protected:
     DWORD           m_dwInputID;     // Input stream ID.

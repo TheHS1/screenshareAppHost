@@ -196,3 +196,13 @@ done:
     SafeRelease(&pSampleOut);
     return hr;
 };
+
+HRESULT H264Encoder2::Flush()
+{
+    if (m_pMFT == NULL)
+    {
+        return MF_E_NOT_INITIALIZED;
+    }
+
+    return m_pMFT->ProcessMessage(MFT_MESSAGE_COMMAND_FLUSH, m_dwInputID);
+}
