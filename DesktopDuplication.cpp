@@ -21,9 +21,7 @@
 #pragma comment (lib, "Mswsock.lib")
 #pragma comment (lib, "AdvApi32.lib")
 
-
-#define DEFAULT_BUFLEN 512
-#define DEFAULT_PORT "8080"
+#define DEFAULT_PORT 3478
 
 #include <limits.h>
 
@@ -51,14 +49,13 @@ H264Encoder2* encoder = NULL;
 INT64 rtStart = 0;
 
 WSADATA wsaData;
-SOCKET server = INVALID_SOCKET;
-fd_set activeFdSet, readFdSet;
-SOCKET socketsArray[2] = { INVALID_SOCKET };
-struct addrinfo* result = NULL;
-struct addrinfo hints;
+SOCKET sock = INVALID_SOCKET;
+sockaddr_in dest;
 int iResult;
 int recvbuflen = 10240;
-char recvbuf[10240];
+string recvbuf;
+
+bool haveClient = false;
 
 // Below are lists of errors expect from Dxgi API calls when a transition event like mode change, PnpStop, PnpStart
 // desktop switch, TDR or session disconnect/reconnect. In all these cases we want the application to clean up the threads that process
@@ -261,7 +258,7 @@ HRESULT WriteFrame(ID3D11Texture2D* frame)
     IMFSample* pSample = NULL;
     IMFSample* pSampleOut = NULL;
     UINT64 rtDuration;
-    if (socketsArray[1] != INVALID_SOCKET) {
+    if (haveClient) {
         hr = MFFrameRateToAverageTimePerFrame(VIDEO_FPS, 1, &rtDuration);
         hr = CreateMediaSample(&pSample, frame);
         pSample->SetSampleDuration(rtDuration);
@@ -280,15 +277,18 @@ HRESULT WriteFrame(ID3D11Texture2D* frame)
         BYTE* data;
         DWORD length;
         outBuffer->Lock(&data, NULL, &length);
-        // Send an initial buffer
-            iResult = send(socketsArray[1], (char*)data, length, 0);
+            int count = length;
+            while (count > 0) {
+                iResult = sendto(sock, (char*)&data[length - count], min(count, 1400), 0, (sockaddr*)&dest, sizeof(dest));
+                count -= min(length, 1400);
+                int a;
         if (iResult == SOCKET_ERROR) {
+                    a = WSAGetLastError();
             //DisplayMsg(L"Send failed with error \n", L"Send Fail", E_FAIL);
-                closesocket(socketsArray[1]);
-                FD_CLR(socketsArray[1], &activeFdSet);
-                socketsArray[1] = INVALID_SOCKET;
-            return 1;
+                    //haveClient = false;
+                    //return 1;
         }
+            }
 
         outBuffer->Unlock();
     }
@@ -362,53 +362,20 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
         HRESULT hr = MFStartup(MF_VERSION, 0);
     }
     hr = InitializeTransform();
+
     // Initialize Winsock
     iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
     if (iResult != 0) {
         printf("WSAStartup failed with error: %d\n", iResult);
         return 1;
     }
-    ZeroMemory(&hints, sizeof(hints));
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_protocol = IPPROTO_TCP;
-    hints.ai_flags = AI_PASSIVE;
-    // Resolve the server address and port
-    iResult = getaddrinfo(NULL, DEFAULT_PORT, &hints, &result);
-    if (iResult != 0) {
-        printf("getaddrinfo failed with error: %d\n", iResult);
-        WSACleanup();
-        return 1;
-    }
     
-    server = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
-    if (server == INVALID_SOCKET) {
-        freeaddrinfo(result);
+    sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock == INVALID_SOCKET) {
         WSACleanup();
         return 1;
     }
 
-    iResult = bind(server, result->ai_addr, (int)result->ai_addrlen);
-    if (iResult == SOCKET_ERROR) {
-        freeaddrinfo(result);
-        closesocket(server);
-        WSACleanup();
-    }
-
-    freeaddrinfo(result);
-
-    iResult = listen(server, SOMAXCONN);
-    if (iResult == SOCKET_ERROR) {
-        closesocket(server);
-        WSACleanup();
-        return 1;
-    }
-    
-    FD_ZERO(&activeFdSet);
-    FD_SET(server, &activeFdSet);
-    socketsArray[0] = server;
-    socketsArray[1] = INVALID_SOCKET;
-    
     // Register class
     WNDCLASSEXW Wc;
     Wc.cbSize           = sizeof(WNDCLASSEXW);
@@ -551,8 +518,8 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
     // Make sure all other threads have exited
     if (SetEvent(TerminateThreadsEvent))
     {
-        closesocket(server);
-        server = INVALID_SOCKET;
+        closesocket(sock);
+        sock = INVALID_SOCKET;
         ThreadMgr.WaitForThreadTermination();
     }
 
@@ -562,7 +529,7 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
     CloseHandle(TerminateThreadsEvent);
     CoUninitialize();
     MFShutdown();
-    closesocket(socketsArray[1]);
+    closesocket(sock);
     WSACleanup();
 
     if (msg.message == WM_QUIT)
@@ -841,116 +808,102 @@ DWORD WINAPI InputProc(_In_ void* Param)
 {
     THREAD_DATA* TData = reinterpret_cast<THREAD_DATA*>(Param);
     // Receive until the peer closes the connection
-    string output;
-    bool haveClient = false;
-    while ((WaitForSingleObjectEx(TData->TerminateThreadsEvent, 0, FALSE) == WAIT_TIMEOUT)) {
-        readFdSet = activeFdSet;
-        int numReady = select(FD_SETSIZE, &readFdSet, NULL, NULL, NULL);
         
-        if (numReady > 0) {
-            for (int i = 0; i < 2; i++) {
-                if (FD_ISSET(socketsArray[i], &readFdSet) && socketsArray[i] == server) {
-        if (server != INVALID_SOCKET && DisplayConfirmation(L"A user has requested to join this session.\n Allow connection?", L"Connection Request") != IDYES) {
-            haveClient = false;
+    while ((WaitForSingleObjectEx(TData->TerminateThreadsEvent, 0, FALSE) == WAIT_TIMEOUT)) {
+        if (!haveClient) {
+            dest.sin_family = AF_INET;
+            dest.sin_port = htons(DEFAULT_PORT);
+            inet_pton(AF_INET, "167.234.216.217", &dest.sin_addr.s_addr);
+            sendto(sock, "1", 2, 0, (sockaddr*)&dest, sizeof(dest));
+            while (!haveClient) {
+                iResult = recvfrom(sock, &recvbuf[0], recvbuflen - 1, 0, NULL, NULL);
+                if (iResult <= 0) {
+                    Sleep(1000);
+                    string str = WSAGetLastError() + "\n";
+                    wstring temp = wstring(str.begin(), str.end());
+                    OutputDebugString(temp.c_str());
                     }
-                    else {
-            haveClient = true;
-                        socketsArray[1] = accept(server, NULL, NULL);
+                else if (DisplayConfirmation(L"A user has requested to join this session.\n Allow connection?", L"Connection Request") == IDYES) {
                         encoder->Flush();
-                        FD_SET(socketsArray[1], &activeFdSet);
+                    recvbuf[iResult] = '\0';
+                    int newPort = stoi(recvbuf.substr(recvbuf.find(":") + 1, iResult));
+                    dest.sin_port = htons(newPort);
+                    inet_pton(AF_INET, recvbuf.substr(0, recvbuf.find(":")).c_str(), &dest.sin_addr.s_addr);
+                    haveClient = true;
         }
-                } else if (FD_ISSET(socketsArray[i], &readFdSet)) {
-            ZeroMemory(recvbuf, recvbuflen);
-                    iResult = recv(socketsArray[i], recvbuf, recvbuflen, 0);
-            if (iResult <= 0) {
-                        closesocket(socketsArray[i]);
-                        FD_CLR(socketsArray[i], &activeFdSet);
-                        socketsArray[i] = INVALID_SOCKET;
-                haveClient = false;
             }
-            string output = recvbuf;
-            if (output[0] == '0') {
+        } else {
+            iResult = recvfrom(sock, &recvbuf[0], recvbuflen - 1, 0, NULL, NULL);
+            if (iResult <= 0) {
+                Sleep(5);
+                //OutputDebugString(L"connection closed");
+                //haveClient = false;
+            } else if (recvbuf[0] == '0') {
                 INPUT inputs[1] = {};
                 inputs[0].type = INPUT_KEYBOARD;
-                inputs[0].ki.wVk = toupper(output[1]);
+                inputs[0].ki.wVk = toupper(recvbuf[1]);
                 SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
-            }
-            if (output[0] == '1') {
+            } else if (recvbuf[0] == '1') {
                 INPUT inputs[1] = {};
                 inputs[0].type = INPUT_MOUSE;
                 string x;
                 int i = 1;
-                while (i < output.length() && output[i] != 'a') {
-                    x += output[i];
+                while (i < iResult && recvbuf[i] != 'a') {
+                    x += recvbuf[i];
                     i++;
                 }
                 inputs[0].mi.dx = (int)(65535 * stof(x.c_str()));
                 i++;
                 x = "";
-                while (i < output.length()) {
-                    x += output[i];
+                while (i < iResult) {
+                    x += recvbuf[i];
                     i++;
                 }
                 inputs[0].mi.dy = (int)(65535 * stof(x.c_str()));
                 inputs[0].mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
                 SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
-            }
-            else if (output[0] == '2') {
+            } else if (recvbuf[0] == '2') {
                 INPUT inputs[1] = {};
                 inputs[0].type = INPUT_MOUSE;
                 inputs[0].mi.dx = 0;
                 inputs[0].mi.dy = 0;
                 inputs[0].mi.dwFlags = MOUSEEVENTF_LEFTDOWN | MOUSEEVENTF_ABSOLUTE;
                 SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
-            }
-            else if (output[0] == '3') {
+            } else if (recvbuf[0] == '3') {
                 INPUT inputs[1] = {};
                 inputs[0].type = INPUT_MOUSE;
                 inputs[0].mi.dx = 0;
                 inputs[0].mi.dy = 0;
                 inputs[0].mi.dwFlags = MOUSEEVENTF_RIGHTDOWN | MOUSEEVENTF_ABSOLUTE;
                 SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
-            }
-            else if (output[0] == '4') {
+            } else if (recvbuf[0] == '4') {
                 INPUT inputs[1] = {};
                 inputs[0].type = INPUT_MOUSE;
                 inputs[0].mi.dx = 0;
                 inputs[0].mi.dy = 0;
                 inputs[0].mi.dwFlags = MOUSEEVENTF_LEFTUP | MOUSEEVENTF_ABSOLUTE;
                 SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
-            }
-            else if (output[0] == '5') {
+            } else if (recvbuf[0] == '5') {
                 INPUT inputs[1] = {};
                 inputs[0].type = INPUT_MOUSE;
                 inputs[0].mi.dx = 0;
                 inputs[0].mi.dy = 0;
                 inputs[0].mi.dwFlags = MOUSEEVENTF_RIGHTUP | MOUSEEVENTF_ABSOLUTE;
                 SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
-            }
-            else if (output[0] == '6') {
+            } else if (recvbuf[0] == '6') {
                 INPUT inputs[1] = {};
                 inputs[0].type = INPUT_KEYBOARD;
                 inputs[0].ki.dwFlags = KEYEVENTF_EXTENDEDKEY;
                 inputs[0].ki.wVk = VK_LSHIFT;
                 SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
-            }
-            else if (output[0] == '7') {
+            } else if (recvbuf[0] == '7') {
                 INPUT inputs[1] = {};
                 inputs[0].type = INPUT_KEYBOARD;
                 inputs[0].ki.dwFlags = KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY;
                 inputs[0].ki.wVk = VK_LSHIFT;
                 SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
             }
-                    
-                }
-            }
         }
-        else {
-            string str = to_string(WSAGetLastError()) + "\n";
-            wstring temp = wstring(str.begin(), str.end());
-            OutputDebugString(temp.c_str());
-        }
-        
         
     }
     return 0;
