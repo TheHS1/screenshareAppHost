@@ -34,6 +34,7 @@
 #include <mfapi.h>
 #include <fstream>
 #include <string>
+#include "SDL_keycode.h"
 
 #pragma comment(lib, "mfplat")
 #pragma comment(lib, "mfuuid")
@@ -44,7 +45,7 @@
 OUTPUTMANAGER OutMgr;
 const UINT32 VIDEO_WIDTH = 1920;
 const UINT32 VIDEO_HEIGHT = 1080;
-const UINT32 VIDEO_FPS = 30;
+const UINT32 VIDEO_FPS = 60;
 H264Encoder2* encoder = NULL;
 INT64 rtStart = 0;
 
@@ -56,6 +57,258 @@ int recvbuflen = 10240;
 string recvbuf;
 
 bool haveClient = false;
+
+WORD getWinCommand(int input) {
+    switch(input) {
+        case SDLK_RETURN: return VK_RETURN;
+        case SDLK_ESCAPE: return VK_ESCAPE;
+        case SDLK_BACKSPACE: return VK_BACK;
+        case SDLK_TAB: return VK_TAB;
+        case SDLK_SPACE: return VK_SPACE;
+        case SDLK_EXCLAIM: return '!';
+        case SDLK_QUOTEDBL: return '"';
+        case SDLK_HASH: return '#';
+        case SDLK_PERCENT: return '%';
+        case SDLK_DOLLAR: return '$';
+        case SDLK_AMPERSAND: return '&';
+        case SDLK_QUOTE: return '\'';
+        case SDLK_LEFTPAREN: return '(';
+        case SDLK_RIGHTPAREN: return ')';
+        case SDLK_ASTERISK: return '*';
+        case SDLK_PLUS: return '+';
+        case SDLK_COMMA: return ',';
+        case SDLK_MINUS: return VK_OEM_MINUS;
+        case SDLK_PERIOD: VK_OEM_PERIOD;
+        case SDLK_SLASH: return '/';
+        case SDLK_0: return '0';
+        case SDLK_1: return '1';
+        case SDLK_2: return '2';
+        case SDLK_3: return '3';
+        case SDLK_4: return '4';
+        case SDLK_5: return '5';
+        case SDLK_6: return '6';
+        case SDLK_7: return '7';
+        case SDLK_8: return '8';
+        case SDLK_9: return '9';
+        case SDLK_COLON: return ':';
+        case SDLK_SEMICOLON: return ';';
+        case SDLK_LESS: return '<';
+        case SDLK_EQUALS: return '=';
+        case SDLK_GREATER: return '>';
+        case SDLK_QUESTION: return '?';
+        case SDLK_AT: return '@';
+        case SDLK_LEFTBRACKET: return '[';
+        case SDLK_BACKSLASH: return '\\';
+        case SDLK_RIGHTBRACKET: return ']';
+        case SDLK_CARET: return '^';
+        case SDLK_UNDERSCORE: return '_';
+        case SDLK_BACKQUOTE: return '`';
+        case SDLK_a: return 'A';
+        case SDLK_b: return 'B';
+        case SDLK_c: return 'C';
+        case SDLK_d: return 'D';
+        case SDLK_e: return 'E';
+        case SDLK_f: return 'F';
+        case SDLK_g: return 'G';
+        case SDLK_h: return 'H';
+        case SDLK_i: return 'I';
+        case SDLK_j: return 'J';
+        case SDLK_k: return 'K';
+        case SDLK_l: return 'L';
+        case SDLK_m: return 'M';
+        case SDLK_n: return 'N';
+        case SDLK_o: return 'O';
+        case SDLK_p: return 'P';
+        case SDLK_q: return 'Q';
+        case SDLK_r: return 'R';
+        case SDLK_s: return 'S';
+        case SDLK_t: return 'T';
+        case SDLK_u: return 'U';
+        case SDLK_v: return 'V';
+        case SDLK_w: return 'W';
+        case SDLK_x: return 'X';
+        case SDLK_y: return 'Y';
+        case SDLK_z: return 'Z';
+        case SDLK_CAPSLOCK: return VK_CAPITAL;
+        case SDLK_F1: return VK_F1;
+        case SDLK_F2: return VK_F2;
+        case SDLK_F3: return VK_F3;
+        case SDLK_F4: return VK_F4;
+        case SDLK_F5: return VK_F5;
+        case SDLK_F6: return VK_F6;
+        case SDLK_F7: return VK_F7;
+        case SDLK_F8: return VK_F8;
+        case SDLK_F9: return VK_F9;
+        case SDLK_F10: return VK_F10;
+        case SDLK_F11: return VK_F11;
+        case SDLK_F12: return VK_F12;
+        case SDLK_PRINTSCREEN: return VK_PRINT;
+        case SDLK_SCROLLLOCK: return VK_SCROLL;
+        case SDLK_PAUSE: return VK_MEDIA_PLAY_PAUSE;
+        case SDLK_INSERT: return VK_INSERT;
+        case SDLK_HOME: return VK_HOME;
+        case SDLK_PAGEUP:
+        case SDLK_DELETE:
+        case SDLK_END:
+        case SDLK_PAGEDOWN:
+        case SDLK_RIGHT: return VK_RIGHT;
+        case SDLK_LEFT: return VK_LEFT;
+        case SDLK_DOWN: return VK_DOWN;
+        case SDLK_UP: return VK_UP;
+        case SDLK_NUMLOCKCLEAR: return VK_NUMLOCK;
+        case SDLK_KP_DIVIDE: return VK_DIVIDE;
+        case SDLK_KP_MULTIPLY: return VK_MULTIPLY;
+        case SDLK_KP_MINUS: return VK_OEM_MINUS;
+        case SDLK_KP_PLUS: return VK_OEM_PLUS;
+        case SDLK_KP_ENTER: return VK_RETURN;
+        case SDLK_KP_1: return VK_NUMPAD1;
+        case SDLK_KP_2: return VK_NUMPAD2;
+        case SDLK_KP_3: return VK_NUMPAD3;
+        case SDLK_KP_4: return VK_NUMPAD4;
+        case SDLK_KP_5: return VK_NUMPAD5;
+        case SDLK_KP_6: return VK_NUMPAD6;
+        case SDLK_KP_7: return VK_NUMPAD7;
+        case SDLK_KP_8: return VK_NUMPAD8;
+        case SDLK_KP_9: return VK_NUMPAD9;
+        case SDLK_KP_0: return VK_NUMPAD0;
+        case SDLK_KP_PERIOD: return VK_OEM_PERIOD;
+        case SDLK_APPLICATION:
+        case SDLK_POWER:
+        case SDLK_KP_EQUALS:
+        case SDLK_F13: return VK_F13;
+        case SDLK_F14: return VK_F14;
+        case SDLK_F15: return VK_F15;
+        case SDLK_F16: return VK_F16;
+        case SDLK_F17: return VK_F17;
+        case SDLK_F18: return VK_F18;
+        case SDLK_F19: return VK_F19;
+        case SDLK_F20: return VK_F20;
+        case SDLK_F21: return VK_F21;
+        case SDLK_F22: return VK_F22;
+        case SDLK_F23: return VK_F23;
+        case SDLK_F24: return VK_F24;
+        case SDLK_EXECUTE: return VK_EXECUTE;
+        case SDLK_HELP: return VK_HELP;
+        //case SDLK_MENU:
+        case SDLK_SELECT: return VK_SELECT;
+        case SDLK_STOP:
+        case SDLK_AGAIN:
+        case SDLK_UNDO:
+        case SDLK_CUT:
+        case SDLK_COPY:
+        case SDLK_PASTE:
+        case SDLK_FIND:
+        case SDLK_MUTE:
+        case SDLK_VOLUMEUP:
+        case SDLK_VOLUMEDOWN:
+        case SDLK_KP_COMMA:
+        case SDLK_KP_EQUALSAS400:
+        case SDLK_ALTERASE:
+        case SDLK_SYSREQ:
+        case SDLK_CANCEL:
+        case SDLK_CLEAR:
+        case SDLK_PRIOR:
+        case SDLK_RETURN2:
+        case SDLK_SEPARATOR:
+        case SDLK_OUT:
+        case SDLK_OPER:
+        case SDLK_CLEARAGAIN:
+        case SDLK_CRSEL:
+        case SDLK_EXSEL:
+        case SDLK_KP_00:
+        case SDLK_KP_000:
+        case SDLK_THOUSANDSSEPARATOR:
+        case SDLK_DECIMALSEPARATOR:
+        case SDLK_CURRENCYUNIT:
+        case SDLK_CURRENCYSUBUNIT:
+        case SDLK_KP_LEFTPAREN:
+        case SDLK_KP_RIGHTPAREN:
+        case SDLK_KP_LEFTBRACE:
+        case SDLK_KP_RIGHTBRACE:
+        case SDLK_KP_TAB:
+        case SDLK_KP_BACKSPACE:
+        case SDLK_KP_A:
+        case SDLK_KP_B:
+        case SDLK_KP_C:
+        case SDLK_KP_D:
+        case SDLK_KP_E:
+        case SDLK_KP_F:
+        case SDLK_KP_XOR:
+        case SDLK_KP_POWER:
+        case SDLK_KP_PERCENT:
+        case SDLK_KP_LESS:
+        case SDLK_KP_GREATER:
+        case SDLK_KP_AMPERSAND:
+        case SDLK_KP_DBLAMPERSAND:
+        case SDLK_KP_VERTICALBAR:
+        case SDLK_KP_DBLVERTICALBAR:
+        case SDLK_KP_COLON:
+        case SDLK_KP_HASH:
+        case SDLK_KP_SPACE:
+        case SDLK_KP_AT:
+        case SDLK_KP_EXCLAM:
+        case SDLK_KP_MEMSTORE:
+        case SDLK_KP_MEMRECALL:
+        case SDLK_KP_MEMCLEAR:
+        case SDLK_KP_MEMADD:
+        case SDLK_KP_MEMSUBTRACT:
+        case SDLK_KP_MEMMULTIPLY:
+        case SDLK_KP_MEMDIVIDE:
+        case SDLK_KP_PLUSMINUS:
+        case SDLK_KP_CLEAR:
+        case SDLK_KP_CLEARENTRY:
+        case SDLK_KP_BINARY:
+        case SDLK_KP_OCTAL:
+        case SDLK_KP_DECIMAL:
+        case SDLK_KP_HEXADECIMAL:
+        case SDLK_LCTRL:
+        case SDLK_LSHIFT: return VK_LSHIFT;
+        case SDLK_LALT: return VK_LMENU;
+        case SDLK_LGUI: return VK_LWIN;
+        case SDLK_RCTRL:
+        case SDLK_RSHIFT: return VK_RSHIFT;
+        case SDLK_RALT: return VK_RMENU;
+        case SDLK_RGUI: return VK_RWIN;
+        case SDLK_MODE:
+        case SDLK_AUDIONEXT:
+        case SDLK_AUDIOPREV:
+        case SDLK_AUDIOSTOP:
+        case SDLK_AUDIOPLAY:
+        case SDLK_AUDIOMUTE:
+        case SDLK_MEDIASELECT:
+        case SDLK_WWW:
+        case SDLK_MAIL:
+        case SDLK_CALCULATOR:
+        case SDLK_COMPUTER:
+        case SDLK_AC_SEARCH:
+        case SDLK_AC_HOME:
+        case SDLK_AC_BACK:
+        case SDLK_AC_FORWARD:
+        case SDLK_AC_STOP:
+        case SDLK_AC_REFRESH:
+        case SDLK_AC_BOOKMARKS:
+        case SDLK_BRIGHTNESSDOWN:
+        case SDLK_BRIGHTNESSUP:
+        case SDLK_DISPLAYSWITCH:
+        case SDLK_KBDILLUMTOGGLE:
+        case SDLK_KBDILLUMDOWN:
+        case SDLK_KBDILLUMUP:
+        case SDLK_EJECT:
+        case SDLK_SLEEP:
+        case SDLK_APP1:
+        case SDLK_APP2:
+        case SDLK_AUDIOREWIND:
+        case SDLK_AUDIOFASTFORWARD:
+        case SDLK_SOFTLEFT:
+        case SDLK_SOFTRIGHT:
+        case SDLK_CALL:
+        case SDLK_ENDCALL:
+        default:
+            return NULL;
+    }
+
+}
+
 
 // Below are lists of errors expect from Dxgi API calls when a transition event like mode change, PnpStop, PnpStart
 // desktop switch, TDR or session disconnect/reconnect. In all these cases we want the application to clean up the threads that process
@@ -217,7 +470,7 @@ static HRESULT CreateMediaSample(IMFSample** ppSample, ID3D11Texture2D* frame)
     desc.CPUAccessFlags = 0;
     desc.MiscFlags = 0;
     hr = device->CreateTexture2D(&desc, NULL, &pTexture);
-
+    
     if (SUCCEEDED(hr)) {
         hr = MFCreateSample(&pSample);
     }
@@ -266,32 +519,32 @@ HRESULT WriteFrame(ID3D11Texture2D* frame)
         rtStart += rtDuration;
         hr = encoder->ProcessInput(pSample);
         if (SUCCEEDED(hr)) {
-        hr = encoder->ProcessOutput(&pSampleOut);
+            hr = encoder->ProcessOutput(&pSampleOut);
         }
         IMFMediaBuffer* outBuffer = NULL;
         if (SUCCEEDED(hr)) {
             hr = pSampleOut->GetBufferByIndex(0, &outBuffer);
         }
-
+        
         if (SUCCEEDED(hr)) {
-        BYTE* data;
-        DWORD length;
-        outBuffer->Lock(&data, NULL, &length);
+            BYTE* data;
+            DWORD length;
+            outBuffer->Lock(&data, NULL, &length);
             int count = length;
             while (count > 0) {
                 iResult = sendto(sock, (char*)&data[length - count], min(count, 1400), 0, (sockaddr*)&dest, sizeof(dest));
                 count -= min(length, 1400);
                 int a;
-        if (iResult == SOCKET_ERROR) {
+                if (iResult == SOCKET_ERROR) {
                     a = WSAGetLastError();
-            //DisplayMsg(L"Send failed with error \n", L"Send Fail", E_FAIL);
+                    //DisplayMsg(L"Send failed with error \n", L"Send Fail", E_FAIL);
                     //haveClient = false;
                     //return 1;
-        }
+                }
             }
-
-        outBuffer->Unlock();
-    }
+            
+            outBuffer->Unlock();
+        }
 
     }
     SafeRelease(&pSample);
@@ -369,12 +622,14 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
         printf("WSAStartup failed with error: %d\n", iResult);
         return 1;
     }
-    
+
     sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock == INVALID_SOCKET) {
         WSACleanup();
         return 1;
     }
+    u_long mode = 1;
+    ioctlsocket(sock, FIONBIO, &mode);
 
     // Register class
     WNDCLASSEXW Wc;
@@ -808,29 +1063,30 @@ DWORD WINAPI InputProc(_In_ void* Param)
 {
     THREAD_DATA* TData = reinterpret_cast<THREAD_DATA*>(Param);
     // Receive until the peer closes the connection
-        
+    
     while ((WaitForSingleObjectEx(TData->TerminateThreadsEvent, 0, FALSE) == WAIT_TIMEOUT)) {
         if (!haveClient) {
             dest.sin_family = AF_INET;
             dest.sin_port = htons(DEFAULT_PORT);
             inet_pton(AF_INET, "167.234.216.217", &dest.sin_addr.s_addr);
             sendto(sock, "1", 2, 0, (sockaddr*)&dest, sizeof(dest));
-            while (!haveClient) {
+            recvbuf.resize(recvbuflen);
+            while (!haveClient && (WaitForSingleObjectEx(TData->TerminateThreadsEvent, 0, FALSE) == WAIT_TIMEOUT)) {
                 iResult = recvfrom(sock, &recvbuf[0], recvbuflen - 1, 0, NULL, NULL);
                 if (iResult <= 0) {
                     Sleep(1000);
                     string str = WSAGetLastError() + "\n";
                     wstring temp = wstring(str.begin(), str.end());
                     OutputDebugString(temp.c_str());
-                    }
+                }
                 else if (DisplayConfirmation(L"A user has requested to join this session.\n Allow connection?", L"Connection Request") == IDYES) {
-                        encoder->Flush();
+                    encoder->Flush();
                     recvbuf[iResult] = '\0';
                     int newPort = stoi(recvbuf.substr(recvbuf.find(":") + 1, iResult));
                     dest.sin_port = htons(newPort);
                     inet_pton(AF_INET, recvbuf.substr(0, recvbuf.find(":")).c_str(), &dest.sin_addr.s_addr);
                     haveClient = true;
-        }
+                }
             }
         } else {
             iResult = recvfrom(sock, &recvbuf[0], recvbuflen - 1, 0, NULL, NULL);
@@ -841,7 +1097,7 @@ DWORD WINAPI InputProc(_In_ void* Param)
             } else if (recvbuf[0] == '0') {
                 INPUT inputs[1] = {};
                 inputs[0].type = INPUT_KEYBOARD;
-                inputs[0].ki.wVk = toupper(recvbuf[1]);
+                inputs[0].ki.wVk = getWinCommand(stoi(recvbuf.substr(1, iResult)));
                 SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
             } else if (recvbuf[0] == '1') {
                 INPUT inputs[1] = {};
@@ -893,18 +1149,12 @@ DWORD WINAPI InputProc(_In_ void* Param)
             } else if (recvbuf[0] == '6') {
                 INPUT inputs[1] = {};
                 inputs[0].type = INPUT_KEYBOARD;
-                inputs[0].ki.dwFlags = KEYEVENTF_EXTENDEDKEY;
-                inputs[0].ki.wVk = VK_LSHIFT;
-                SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
-            } else if (recvbuf[0] == '7') {
-                INPUT inputs[1] = {};
-                inputs[0].type = INPUT_KEYBOARD;
-                inputs[0].ki.dwFlags = KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY;
-                inputs[0].ki.wVk = VK_LSHIFT;
+                inputs[0].ki.dwFlags = KEYEVENTF_KEYUP;
+                inputs[0].ki.wVk = getWinCommand(stoi(recvbuf.substr(1, iResult)));
                 SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
             }
         }
-        
+                                 
     }
     return 0;
 }

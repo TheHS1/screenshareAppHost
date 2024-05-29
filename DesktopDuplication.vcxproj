@@ -172,6 +172,8 @@
     <ClInclude Include="H264Encoder2.h" />
     <ClInclude Include="OutputManager.h" />
     <ClInclude Include="Preproc.h" />
+    <ClInclude Include="SDL_keycode.h" />
+    <ClInclude Include="SDL_scancode.h" />
     <ClInclude Include="ThreadManager.h" />
   </ItemGroup>
   <ItemGroup>

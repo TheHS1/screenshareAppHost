@@ -84,7 +84,7 @@ HRESULT H264Encoder2::Initialize(const int VIDEO_WIDTH, const int VIDEO_HEIGHT)
     hr = MFCreateMediaType(&m_pOutputType);
     hr = m_pOutputType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
     hr = m_pOutputType->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_H264);
-    hr = m_pOutputType->SetUINT32(MF_MT_AVG_BITRATE, 30000000);
+    hr = m_pOutputType->SetUINT32(MF_MT_AVG_BITRATE, 3000000);
     hr = MFSetAttributeSize(m_pOutputType, MF_MT_FRAME_SIZE, VIDEO_WIDTH, VIDEO_HEIGHT);
     hr = MFSetAttributeRatio(m_pOutputType, MF_MT_FRAME_RATE, 60, 1);
     hr = m_pOutputType->SetUINT32(MF_MT_INTERLACE_MODE, 2);
@@ -99,6 +99,8 @@ HRESULT H264Encoder2::Initialize(const int VIDEO_WIDTH, const int VIDEO_HEIGHT)
         hr = inputType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
 
         hr = inputType->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_NV12);
+
+        hr = inputType->SetUINT32(MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_Main);
 
         hr = MFSetAttributeSize(inputType, MF_MT_FRAME_SIZE, VIDEO_WIDTH, VIDEO_HEIGHT);
 
