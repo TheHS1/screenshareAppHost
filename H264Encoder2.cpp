@@ -99,7 +99,7 @@ HRESULT H264Encoder2::Initialize(const int VIDEO_WIDTH, const int VIDEO_HEIGHT)
 
         hr = inputType->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_NV12);
 
-
+       
         hr = MFSetAttributeSize(inputType, MF_MT_FRAME_SIZE, VIDEO_WIDTH, VIDEO_HEIGHT);
 
         hr = MFSetAttributeRatio(inputType, MF_MT_FRAME_RATE, 30, 1);

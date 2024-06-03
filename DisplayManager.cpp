@@ -6,6 +6,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved
 
 #include "DisplayManager.h"
+#include <mfapi.h>
 using namespace DirectX;
 
 //
@@ -20,8 +21,14 @@ DISPLAYMANAGER::DISPLAYMANAGER() : m_Device(nullptr),
                                    m_RTV(nullptr),
                                    m_SamplerLinear(nullptr),
                                    m_DirtyVertexBufferAlloc(nullptr),
-                                   m_DirtyVertexBufferAllocSize(0)
+                                   m_DirtyVertexBufferAllocSize(0),
+                                   m_pTexture(nullptr)
 {
+    HRESULT hr = MFStartup(MF_VERSION, 0);
+    if (SUCCEEDED(hr)) {
+        m_encoder = new H264Encoder2();
+        HRESULT hr = m_encoder->Initialize(VIDEO_WIDTH, VIDEO_HEIGHT);
+    }
 }
 
 //
@@ -36,6 +43,8 @@ DISPLAYMANAGER::~DISPLAYMANAGER()
         delete [] m_DirtyVertexBufferAlloc;
         m_DirtyVertexBufferAlloc = nullptr;
     }
+
+    MFShutdown();
 }
 
 //
@@ -56,6 +65,22 @@ void DISPLAYMANAGER::InitD3D(DX_RESOURCES* Data)
     m_PixelShader->AddRef();
     m_InputLayout->AddRef();
     m_SamplerLinear->AddRef();
+    D3D11_TEXTURE2D_DESC desc;
+
+    desc.Width = VIDEO_WIDTH;
+    desc.Height = VIDEO_HEIGHT;
+    desc.MipLevels = desc.ArraySize = 1;
+    desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_NV12;
+    desc.SampleDesc.Count = 1;
+    desc.SampleDesc.Quality = 0;
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.BindFlags = D3D11_BIND_RENDER_TARGET;
+    desc.CPUAccessFlags = 0;
+    desc.MiscFlags = 0;
+    HRESULT hr = m_Device->CreateTexture2D(&desc, NULL, &m_pTexture);
+    m_converter = new RGBToNV12(m_Device, m_DeviceContext);
+    m_converter->Init();
 }
 
 //
@@ -423,6 +448,69 @@ DUPL_RETURN DISPLAYMANAGER::CopyDirty(_In_ ID3D11Texture2D* SrcSurface, _Inout_ 
     return DUPL_RETURN_SUCCESS;
 }
 
+HRESULT DISPLAYMANAGER::CreateMediaSample(_In_ IMFSample** ppSample, _In_ ID3D11Texture2D* frame)
+{
+    HRESULT hr = S_OK;
+
+    IMFSample* pSample = NULL;
+    IMFMediaBuffer* pBuffer = NULL;
+
+
+    if (SUCCEEDED(hr)) {
+        hr = MFCreateSample(&pSample);
+    }
+
+    if (SUCCEEDED(hr)) {
+        m_converter->Convert(frame, m_pTexture);
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        hr = MFCreateDXGISurfaceBuffer(__uuidof(ID3D11Texture2D), m_pTexture, 0, FALSE, &pBuffer);
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        hr = pSample->AddBuffer(pBuffer);
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        *ppSample = pSample;
+        (*ppSample)->AddRef();
+    }
+
+    SafeRelease(&pSample);
+    SafeRelease(&pBuffer);
+    return hr;
+}
+
+HRESULT DISPLAYMANAGER::WriteFrame(_In_ ID3D11Texture2D* frame, _Out_ IMFMediaBuffer** outBuffer)
+{
+    HRESULT hr = S_OK;
+
+    IMFSample* pSample = NULL;
+    IMFSample* pSampleOut = NULL;
+    UINT64 rtDuration;
+    hr = MFFrameRateToAverageTimePerFrame(VIDEO_FPS, 1, &rtDuration);
+    hr = CreateMediaSample(&pSample, frame);
+    pSample->SetSampleDuration(rtDuration);
+    hr = pSample->SetSampleTime(rtStart);
+    rtStart += rtDuration;
+    hr = m_encoder->ProcessInput(pSample);
+    if (SUCCEEDED(hr)) {
+        hr = m_encoder->ProcessOutput(&pSampleOut);
+    }
+    if (SUCCEEDED(hr)) {
+        hr = pSampleOut->GetBufferByIndex(0, outBuffer);
+    }
+
+    SafeRelease(&pSample);
+    SafeRelease(&pSampleOut);
+    return hr;
+}
+
+
 //
 // Clean all references
 //
@@ -475,4 +563,7 @@ void DISPLAYMANAGER::CleanRefs()
         m_RTV->Release();
         m_RTV = nullptr;
     }
+
+    delete m_encoder;
+    delete m_converter;
 }

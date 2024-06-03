@@ -434,125 +434,6 @@ void DYNAMIC_WAIT::Wait()
     m_WaitCountInCurrentBand++;
 }
 
-HRESULT InitializeTransform()
-{
-    encoder = new H264Encoder2();
-
-    HRESULT hr = encoder->Initialize(1920, 1080);
-    return hr;
-}
-
-static HRESULT CreateMediaSample(IMFSample** ppSample, ID3D11Texture2D* frame)
-{
-    HRESULT hr = S_OK;
-
-    IMFSample* pSample = NULL;
-    IMFMediaBuffer* pBuffer = NULL;
-
-    D3D11_TEXTURE2D_DESC desc;
-    ID3D11Device* device;
-    ID3D11DeviceContext* context;
-    ID3D11Texture2D* pTexture = NULL;
-
-    frame->GetDevice(&device);
-    device->GetImmediateContext(&context);
-    RGBToNV12 converter(device, context);
-
-    desc.Width = VIDEO_WIDTH;
-    desc.Height = VIDEO_HEIGHT;
-    desc.MipLevels = desc.ArraySize = 1;
-    desc.ArraySize = 1;
-    desc.Format = DXGI_FORMAT_NV12;
-    desc.SampleDesc.Count = 1;
-    desc.SampleDesc.Quality = 0;
-    desc.Usage = D3D11_USAGE_DEFAULT;
-    desc.BindFlags = D3D11_BIND_RENDER_TARGET;
-    desc.CPUAccessFlags = 0;
-    desc.MiscFlags = 0;
-    hr = device->CreateTexture2D(&desc, NULL, &pTexture);
-    
-    if (SUCCEEDED(hr)) {
-        hr = MFCreateSample(&pSample);
-    }
-    if (SUCCEEDED(hr)) {
-        hr = converter.Init();
-    }
-
-    if (SUCCEEDED(hr)) {
-        converter.Convert(frame, pTexture);
-    }
-
-    if (SUCCEEDED(hr))
-    {
-        hr = MFCreateDXGISurfaceBuffer(__uuidof(ID3D11Texture2D), pTexture, 0, FALSE, &pBuffer);
-    }
-
-    if (SUCCEEDED(hr))
-    {
-        hr = pSample->AddBuffer(pBuffer);
-    }
-
-    if (SUCCEEDED(hr))
-    {
-        *ppSample = pSample;
-        (*ppSample)->AddRef();
-    }
-
-    SafeRelease(&pSample);
-    SafeRelease(&pBuffer);
-    SafeRelease(&pTexture);
-    return hr;
-}
-
-HRESULT WriteFrame(ID3D11Texture2D* frame)
-{
-    HRESULT hr = S_OK;
-
-    IMFSample* pSample = NULL;
-    IMFSample* pSampleOut = NULL;
-    UINT64 rtDuration;
-    if (haveClient) {
-        hr = MFFrameRateToAverageTimePerFrame(VIDEO_FPS, 1, &rtDuration);
-        hr = CreateMediaSample(&pSample, frame);
-        pSample->SetSampleDuration(rtDuration);
-        hr = pSample->SetSampleTime(rtStart);
-        rtStart += rtDuration;
-        hr = encoder->ProcessInput(pSample);
-        if (SUCCEEDED(hr)) {
-            hr = encoder->ProcessOutput(&pSampleOut);
-        }
-        IMFMediaBuffer* outBuffer = NULL;
-        if (SUCCEEDED(hr)) {
-            hr = pSampleOut->GetBufferByIndex(0, &outBuffer);
-        }
-        
-        if (SUCCEEDED(hr)) {
-            BYTE* data;
-            DWORD length;
-            outBuffer->Lock(&data, NULL, &length);
-            int count = length;
-            while (count > 0) {
-                iResult = sendto(sock, (char*)&data[length - count], min(count, 1400), 0, (sockaddr*)&dest, sizeof(dest));
-                count -= min(length, 1400);
-                int a;
-                if (iResult == SOCKET_ERROR) {
-                    a = WSAGetLastError();
-                    //DisplayMsg(L"Send failed with error \n", L"Send Fail", E_FAIL);
-                    //haveClient = false;
-                    //return 1;
-                }
-            }
-            
-            outBuffer->Unlock();
-        }
-
-    }
-    SafeRelease(&pSample);
-    SafeRelease(&pSampleOut);
-    return hr;
-}
-
-
 //
 // Program entry point
 //
@@ -611,10 +492,6 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
         return 0;
     }
     HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
-    if (SUCCEEDED(hr)) {
-        HRESULT hr = MFStartup(MF_VERSION, 0);
-    }
-    hr = InitializeTransform();
 
     // Initialize Winsock
     iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
@@ -783,7 +660,6 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
     CloseHandle(ExpectedErrorEvent);
     CloseHandle(TerminateThreadsEvent);
     CoUninitialize();
-    MFShutdown();
     closesocket(sock);
     WSACleanup();
 
@@ -886,6 +762,12 @@ DWORD WINAPI DDProc(_In_ void* Param)
     DUPL_RETURN Ret;
     HDESK CurrentDesktop = nullptr;
     CurrentDesktop = OpenInputDesktop(0, FALSE, GENERIC_ALL);
+
+    // Write frame objects
+    IMFMediaBuffer* outBuffer;
+    DWORD length;
+    BYTE* data;
+
     if (!CurrentDesktop)
     {
         // We do not have access to the desktop so request a retry
@@ -1002,7 +884,30 @@ DWORD WINAPI DDProc(_In_ void* Param)
         if (SUCCEEDED(hr))
         {
             // Send frames to the transformer
-            hr = WriteFrame(SharedSurf);
+            if (haveClient) {
+                hr = DispMgr.WriteFrame(SharedSurf, &outBuffer);
+                if (SUCCEEDED(hr)) {
+ 
+                    outBuffer->Lock(&data, NULL, &length);
+                    int count = length;
+                    while (count > 0) {
+                        iResult = sendto(sock, (char*)&data[length - count], min(count, 1400), 0, (sockaddr*)&dest, sizeof(dest));
+                        count -= min(length, 1400);
+                        int a;
+                        if (iResult == SOCKET_ERROR) {
+                            a = WSAGetLastError();
+                            //DisplayMsg(L"Send failed with error \n", L"Send Fail", E_FAIL);
+                            //haveClient = false;
+                            //return 1;
+                        }
+                    }
+
+                    outBuffer->Unlock();
+                }
+                SafeRelease(&outBuffer);
+            }
+            //GetCounter();
+
             if (FAILED(hr))
             {
                 break;
@@ -1068,7 +973,8 @@ DWORD WINAPI InputProc(_In_ void* Param)
         if (!haveClient) {
             dest.sin_family = AF_INET;
             dest.sin_port = htons(DEFAULT_PORT);
-            inet_pton(AF_INET, "167.234.216.217", &dest.sin_addr.s_addr);
+            //inet_pton(AF_INET, "167.234.216.217", &dest.sin_addr.s_addr);
+            inet_pton(AF_INET, "192.168.100.2", &dest.sin_addr.s_addr);
             sendto(sock, "1", 2, 0, (sockaddr*)&dest, sizeof(dest));
             recvbuf.resize(recvbuflen);
             while (!haveClient && (WaitForSingleObjectEx(TData->TerminateThreadsEvent, 0, FALSE) == WAIT_TIMEOUT)) {
@@ -1080,11 +986,12 @@ DWORD WINAPI InputProc(_In_ void* Param)
                     OutputDebugString(temp.c_str());
                 }
                 else if (DisplayConfirmation(L"A user has requested to join this session.\n Allow connection?", L"Connection Request") == IDYES) {
-                    encoder->Flush();
+                    //encoder->Flush();
                     recvbuf[iResult] = '\0';
                     int newPort = stoi(recvbuf.substr(recvbuf.find(":") + 1, iResult));
                     dest.sin_port = htons(newPort);
-                    inet_pton(AF_INET, recvbuf.substr(0, recvbuf.find(":")).c_str(), &dest.sin_addr.s_addr);
+                    //inet_pton(AF_INET, recvbuf.substr(0, recvbuf.find(":")).c_str(), &dest.sin_addr.s_addr);
+                    inet_pton(AF_INET, "192.168.100.2", &dest.sin_addr.s_addr);
                     haveClient = true;
                 }
             }
@@ -1097,7 +1004,7 @@ DWORD WINAPI InputProc(_In_ void* Param)
             } else if (recvbuf[0] == '0') {
                 INPUT inputs[1] = {};
                 inputs[0].type = INPUT_KEYBOARD;
-                inputs[0].ki.wVk = getWinCommand(stoi(recvbuf.substr(1, iResult)));
+                inputs[0].ki.wVk = getWinCommand(stoi(recvbuf.substr(1, iResult - 1)));
                 SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
             } else if (recvbuf[0] == '1') {
                 INPUT inputs[1] = {};
@@ -1150,7 +1057,7 @@ DWORD WINAPI InputProc(_In_ void* Param)
                 INPUT inputs[1] = {};
                 inputs[0].type = INPUT_KEYBOARD;
                 inputs[0].ki.dwFlags = KEYEVENTF_KEYUP;
-                inputs[0].ki.wVk = getWinCommand(stoi(recvbuf.substr(1, iResult)));
+                inputs[0].ki.wVk = getWinCommand(stoi(recvbuf.substr(1, iResult - 1)));
                 SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
             }
         }
