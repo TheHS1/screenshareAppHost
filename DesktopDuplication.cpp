@@ -266,11 +266,11 @@ WORD getWinCommand(int input) {
         case SDLK_KP_OCTAL:
         case SDLK_KP_DECIMAL:
         case SDLK_KP_HEXADECIMAL:
-        case SDLK_LCTRL:
+        case SDLK_LCTRL: return VK_LCONTROL;
         case SDLK_LSHIFT: return VK_LSHIFT;
         case SDLK_LALT: return VK_LMENU;
         case SDLK_LGUI: return VK_LWIN;
-        case SDLK_RCTRL:
+        case SDLK_RCTRL: return VK_RCONTROL;
         case SDLK_RSHIFT: return VK_RSHIFT;
         case SDLK_RALT: return VK_RMENU;
         case SDLK_RGUI: return VK_RWIN;
