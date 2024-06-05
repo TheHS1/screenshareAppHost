@@ -24,7 +24,7 @@ class DISPLAYMANAGER
         void InitD3D(DX_RESOURCES* Data);
         ID3D11Device* GetDevice();
         DUPL_RETURN ProcessFrame(_In_ FRAME_DATA* Data, _Inout_ ID3D11Texture2D* SharedSurf, INT OffsetX, INT OffsetY, _In_ DXGI_OUTPUT_DESC* DeskDesc);
-        HRESULT WriteFrame(_In_ ID3D11Texture2D* frame, _Out_ IMFMediaBuffer** outBuffer);
+        HRESULT WriteFrame(_In_ ID3D11Texture2D* frame, _Inout_ bool* needFlush, _Out_ IMFMediaBuffer** outBuffer);
 
         void CleanRefs();
         static const UINT32 VIDEO_WIDTH = 1920;
@@ -38,6 +38,7 @@ class DISPLAYMANAGER
         void SetDirtyVert(_Out_writes_(NUMVERTICES) VERTEX* Vertices, _In_ RECT* Dirty, INT OffsetX, INT OffsetY, _In_ DXGI_OUTPUT_DESC* DeskDesc, _In_ D3D11_TEXTURE2D_DESC* FullDesc, _In_ D3D11_TEXTURE2D_DESC* ThisDesc);
         void SetMoveRect(_Out_ RECT* SrcRect, _Out_ RECT* DestRect, _In_ DXGI_OUTPUT_DESC* DeskDesc, _In_ DXGI_OUTDUPL_MOVE_RECT* MoveRect, INT TexWidth, INT TexHeight);
         HRESULT CreateMediaSample(_In_ IMFSample** ppSample, _In_ ID3D11Texture2D* frame);
+        HRESULT flushEncoder();
 
     // variables
         ID3D11Device* m_Device;

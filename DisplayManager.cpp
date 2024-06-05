@@ -485,7 +485,7 @@ HRESULT DISPLAYMANAGER::CreateMediaSample(_In_ IMFSample** ppSample, _In_ ID3D11
     return hr;
 }
 
-HRESULT DISPLAYMANAGER::WriteFrame(_In_ ID3D11Texture2D* frame, _Out_ IMFMediaBuffer** outBuffer)
+HRESULT DISPLAYMANAGER::WriteFrame(_In_ ID3D11Texture2D* frame, _Inout_ bool* needFlush, _Out_ IMFMediaBuffer** outBuffer)
 {
     HRESULT hr = S_OK;
 
@@ -497,6 +497,10 @@ HRESULT DISPLAYMANAGER::WriteFrame(_In_ ID3D11Texture2D* frame, _Out_ IMFMediaBu
     pSample->SetSampleDuration(rtDuration);
     hr = pSample->SetSampleTime(rtStart);
     rtStart += rtDuration;
+    if (*needFlush) {
+        flushEncoder();
+        *needFlush = false;
+    }
     hr = m_encoder->ProcessInput(pSample);
     if (SUCCEEDED(hr)) {
         hr = m_encoder->ProcessOutput(&pSampleOut);
@@ -510,6 +514,9 @@ HRESULT DISPLAYMANAGER::WriteFrame(_In_ ID3D11Texture2D* frame, _Out_ IMFMediaBu
     return hr;
 }
 
+HRESULT DISPLAYMANAGER::flushEncoder() {
+    return m_encoder->Flush();
+}
 
 //
 // Clean all references

@@ -39,6 +39,7 @@
 #pragma comment(lib, "mfplat")
 #pragma comment(lib, "mfuuid")
 
+#define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12)
 
 
 #define ddID 2
@@ -62,6 +63,7 @@ string recvbuf;
 struct timeval tv;
 
 bool haveClient = false;
+bool needFlush = true;
 
 WORD getWinCommand(int input) {
     switch(input) {
@@ -472,6 +474,7 @@ int initSocket() {
                 dest.sin_port = htons(newPort);
                 //inet_pton(AF_INET, recvbuf.substr(0, recvbuf.find(":")).c_str(), &dest.sin_addr.s_addr);
                 inet_pton(AF_INET, "192.168.100.2", &dest.sin_addr.s_addr);
+                needFlush = true;
                 haveClient = true;
             }
         }
@@ -589,16 +592,16 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
     AdjustWindowRect(&WindowRect, WS_OVERLAPPEDWINDOW, FALSE);
     mainhndl = CreateWindowW(L"MainApp", L"Remote Desktop App",
         WS_VISIBLE | WS_OVERLAPPEDWINDOW,
-                           0, 0,
-                           WindowRect.right - WindowRect.left, WindowRect.bottom - WindowRect.top,
-                           nullptr, nullptr, hInstance, nullptr);
+        0, 0,
+        WindowRect.right - WindowRect.left, WindowRect.bottom - WindowRect.top,
+        nullptr, nullptr, hInstance, nullptr);
 
     if (!mainhndl)
     {
         ProcessFailure(nullptr, L"Window creation failed", L"Error", E_FAIL);
         return 0;
     }
-
+    
 
     DestroyCursor(Cursor);
 
@@ -1144,63 +1147,63 @@ DWORD WINAPI InputProc(_In_ void* Param)
                     OutputDebugString(temp.c_str());
                 }
                 if (recvbuf[0] == '0') {
-                INPUT inputs[1] = {};
-                inputs[0].type = INPUT_KEYBOARD;
-                inputs[0].ki.wVk = getWinCommand(stoi(recvbuf.substr(1, iResult - 1)));
-                SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
+                    INPUT inputs[1] = {};
+                    inputs[0].type = INPUT_KEYBOARD;
+                    inputs[0].ki.wVk = getWinCommand(stoi(recvbuf.substr(1, iResult - 1)));
+                    SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
                 } else if (recvbuf[0] == '1') {
-                INPUT inputs[1] = {};
-                inputs[0].type = INPUT_MOUSE;
-                string x;
-                int i = 1;
-                while (i < iResult && recvbuf[i] != 'a') {
-                    x += recvbuf[i];
+                    INPUT inputs[1] = {};
+                    inputs[0].type = INPUT_MOUSE;
+                    string x;
+                    int i = 1;
+                    while (i < iResult && recvbuf[i] != 'a') {
+                        x += recvbuf[i];
+                        i++;
+                    }
+                    inputs[0].mi.dx = (int)(65535 * stof(x.c_str()));
                     i++;
-                }
-                inputs[0].mi.dx = (int)(65535 * stof(x.c_str()));
-                i++;
-                x = "";
-                while (i < iResult) {
-                    x += recvbuf[i];
-                    i++;
-                }
-                inputs[0].mi.dy = (int)(65535 * stof(x.c_str()));
-                inputs[0].mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
-                SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
+                    x = "";
+                    while (i < iResult) {
+                        x += recvbuf[i];
+                        i++;
+                    }
+                    inputs[0].mi.dy = (int)(65535 * stof(x.c_str()));
+                    inputs[0].mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
+                    SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
                 } else if (recvbuf[0] == '2') {
-                INPUT inputs[1] = {};
-                inputs[0].type = INPUT_MOUSE;
-                inputs[0].mi.dx = 0;
-                inputs[0].mi.dy = 0;
-                inputs[0].mi.dwFlags = MOUSEEVENTF_LEFTDOWN | MOUSEEVENTF_ABSOLUTE;
-                SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
+                    INPUT inputs[1] = {};
+                    inputs[0].type = INPUT_MOUSE;
+                    inputs[0].mi.dx = 0;
+                    inputs[0].mi.dy = 0;
+                    inputs[0].mi.dwFlags = MOUSEEVENTF_LEFTDOWN | MOUSEEVENTF_ABSOLUTE;
+                    SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
                 } else if (recvbuf[0] == '3') {
-                INPUT inputs[1] = {};
-                inputs[0].type = INPUT_MOUSE;
-                inputs[0].mi.dx = 0;
-                inputs[0].mi.dy = 0;
-                inputs[0].mi.dwFlags = MOUSEEVENTF_RIGHTDOWN | MOUSEEVENTF_ABSOLUTE;
-                SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
-            } else if (recvbuf[0] == '4') {
-                INPUT inputs[1] = {};
-                inputs[0].type = INPUT_MOUSE;
-                inputs[0].mi.dx = 0;
-                inputs[0].mi.dy = 0;
-                inputs[0].mi.dwFlags = MOUSEEVENTF_LEFTUP | MOUSEEVENTF_ABSOLUTE;
-                SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
-            } else if (recvbuf[0] == '5') {
-                INPUT inputs[1] = {};
-                inputs[0].type = INPUT_MOUSE;
-                inputs[0].mi.dx = 0;
-                inputs[0].mi.dy = 0;
-                inputs[0].mi.dwFlags = MOUSEEVENTF_RIGHTUP | MOUSEEVENTF_ABSOLUTE;
-                SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
-            } else if (recvbuf[0] == '6') {
-                INPUT inputs[1] = {};
-                inputs[0].type = INPUT_KEYBOARD;
-                inputs[0].ki.dwFlags = KEYEVENTF_KEYUP;
-                inputs[0].ki.wVk = getWinCommand(stoi(recvbuf.substr(1, iResult - 1)));
-                SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
+                    INPUT inputs[1] = {};
+                    inputs[0].type = INPUT_MOUSE;
+                    inputs[0].mi.dx = 0;
+                    inputs[0].mi.dy = 0;
+                    inputs[0].mi.dwFlags = MOUSEEVENTF_RIGHTDOWN | MOUSEEVENTF_ABSOLUTE;
+                    SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
+                } else if (recvbuf[0] == '4') {
+                    INPUT inputs[1] = {};
+                    inputs[0].type = INPUT_MOUSE;
+                    inputs[0].mi.dx = 0;
+                    inputs[0].mi.dy = 0;
+                    inputs[0].mi.dwFlags = MOUSEEVENTF_LEFTUP | MOUSEEVENTF_ABSOLUTE;
+                    SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
+                } else if (recvbuf[0] == '5') {
+                    INPUT inputs[1] = {};
+                    inputs[0].type = INPUT_MOUSE;
+                    inputs[0].mi.dx = 0;
+                    inputs[0].mi.dy = 0;
+                    inputs[0].mi.dwFlags = MOUSEEVENTF_RIGHTUP | MOUSEEVENTF_ABSOLUTE;
+                    SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
+                } else if (recvbuf[0] == '6') {
+                    INPUT inputs[1] = {};
+                    inputs[0].type = INPUT_KEYBOARD;
+                    inputs[0].ki.dwFlags = KEYEVENTF_KEYUP;
+                    inputs[0].ki.wVk = getWinCommand(stoi(recvbuf.substr(1, iResult - 1)));
+                    SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
                 } else if (recvbuf[0] == '7') {
                     OutputDebugString(L"Keep Alive");
                 }
