@@ -39,22 +39,27 @@
 #pragma comment(lib, "mfplat")
 #pragma comment(lib, "mfuuid")
 
+
+
+#define ddID 2
+#define dconnID 3
+#define connID 4
+#define connStatus 5
+
 //
 // Globals
 //
 OUTPUTMANAGER OutMgr;
-const UINT32 VIDEO_WIDTH = 1920;
-const UINT32 VIDEO_HEIGHT = 1080;
-const UINT32 VIDEO_FPS = 60;
-H264Encoder2* encoder = NULL;
-INT64 rtStart = 0;
+RECT WindowRect = { 0, 0, 800, 600 };
+HWND ddhndl, mainhndl, dconbutton, conbutton, conStatus;
 
 WSADATA wsaData;
 SOCKET sock = INVALID_SOCKET;
+fd_set activeFdSet, readFdSet;
 sockaddr_in dest;
-int iResult;
 int recvbuflen = 10240;
 string recvbuf;
+struct timeval tv;
 
 bool haveClient = false;
 
@@ -350,6 +355,7 @@ HRESULT EnumOutputsExpectedErrors[] = {
 // Forward Declarations
 //
 DWORD WINAPI DDProc(_In_ void* Param);
+LRESULT CALLBACK DDWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
 bool ProcessCmdline(_Out_ INT* Output);
 void ShowHelp();
@@ -434,6 +440,55 @@ void DYNAMIC_WAIT::Wait()
     m_WaitCountInCurrentBand++;
 }
 
+int initSocket() {
+    haveClient = false;
+    int iResult = 0;
+    if (sock == INVALID_SOCKET) {
+        sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (sock == INVALID_SOCKET) {
+            WSACleanup();
+            return 1;
+        }
+        FD_ZERO(&activeFdSet);
+        FD_SET(sock, &activeFdSet);
+        dest.sin_family = AF_INET;
+        dest.sin_port = htons(DEFAULT_PORT);
+        //inet_pton(AF_INET, "167.234.216.217", &dest.sin_addr.s_addr);
+        inet_pton(AF_INET, "192.168.100.2", &dest.sin_addr.s_addr);
+        u_long mode = 0;
+        ioctlsocket(sock, SIO_UDP_CONNRESET, &mode);
+        sendto(sock, "1", 2, 0, (sockaddr*)&dest, sizeof(dest));
+        recvbuf.resize(recvbuflen);
+        while (!haveClient) {
+            iResult = recvfrom(sock, &recvbuf[0], recvbuflen - 1, 0, NULL, NULL);
+            if (iResult <= 0) {
+                string str = to_string(WSAGetLastError()) + "\n";
+                wstring temp = wstring(str.begin(), str.end());
+                OutputDebugString(temp.c_str());
+            }
+            else if (DisplayConfirmation(L"A user has requested to join this session.\n Allow connection?", L"Connection Request") == IDYES) {
+                recvbuf[iResult] = '\0';
+                int newPort = stoi(recvbuf.substr(recvbuf.find(":") + 1, iResult));
+                dest.sin_port = htons(newPort);
+                //inet_pton(AF_INET, recvbuf.substr(0, recvbuf.find(":")).c_str(), &dest.sin_addr.s_addr);
+                inet_pton(AF_INET, "192.168.100.2", &dest.sin_addr.s_addr);
+                haveClient = true;
+            }
+        }
+    }
+    return 0;
+}
+
+void stopSocket() {
+    closesocket(sock);
+    sock = INVALID_SOCKET;
+    FD_CLR(sock, &activeFdSet);
+    SetWindowText(conStatus, L"Client disconnected");
+
+    EnableWindow(conbutton, true);
+    EnableWindow(dconbutton, false);
+}
+
 //
 // Program entry point
 //
@@ -443,14 +498,12 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
     UNREFERENCED_PARAMETER(lpCmdLine);
 
     INT SingleOutput;
+    int iResult = 0;
 
     // Synchronization
     HANDLE UnexpectedErrorEvent = nullptr;
     HANDLE ExpectedErrorEvent = nullptr;
     HANDLE TerminateThreadsEvent = nullptr;
-
-    // Window
-    HWND WindowHandle = nullptr;
 
     bool CmdResult = ProcessCmdline(&SingleOutput);
     if (!CmdResult)
@@ -500,25 +553,21 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
         return 1;
     }
 
-    sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (sock == INVALID_SOCKET) {
-        WSACleanup();
-        return 1;
-    }
-    u_long mode = 1;
-    ioctlsocket(sock, FIONBIO, &mode);
+    //set timeout for select
+    tv.tv_sec = 1;
+    tv.tv_usec = 0;
 
     // Register class
     WNDCLASSEXW Wc;
     Wc.cbSize           = sizeof(WNDCLASSEXW);
     Wc.style            = CS_HREDRAW | CS_VREDRAW;
-    Wc.lpfnWndProc      = WndProc;
+    Wc.lpfnWndProc      = DDWndProc;
     Wc.cbClsExtra       = 0;
     Wc.cbWndExtra       = 0;
     Wc.hInstance        = hInstance;
     Wc.hIcon            = nullptr;
     Wc.hCursor          = Cursor;
-    Wc.hbrBackground    = nullptr;
+    Wc.hbrBackground    = (HBRUSH)(COLOR_BACKGROUND + 1);
     Wc.lpszMenuName     = nullptr;
     Wc.lpszClassName    = L"ddasample";
     Wc.hIconSm          = nullptr;
@@ -528,24 +577,30 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
         return 0;
     }
 
+    Wc.lpfnWndProc      = WndProc;
+    Wc.lpszClassName    = L"MainApp";
+    if (!RegisterClassExW(&Wc))
+    {
+        ProcessFailure(nullptr, L"Window class registration failed", L"Error", E_UNEXPECTED);
+        return 0;
+    }
+
     // Create window
-    RECT WindowRect = {0, 0, 800, 600};
     AdjustWindowRect(&WindowRect, WS_OVERLAPPEDWINDOW, FALSE);
-    WindowHandle = CreateWindowW(L"ddasample", L"Remote Desktop App",
-                           WS_OVERLAPPEDWINDOW,
+    mainhndl = CreateWindowW(L"MainApp", L"Remote Desktop App",
+        WS_VISIBLE | WS_OVERLAPPEDWINDOW,
                            0, 0,
                            WindowRect.right - WindowRect.left, WindowRect.bottom - WindowRect.top,
                            nullptr, nullptr, hInstance, nullptr);
-    if (!WindowHandle)
+
+    if (!mainhndl)
     {
         ProcessFailure(nullptr, L"Window creation failed", L"Error", E_FAIL);
         return 0;
     }
 
-    DestroyCursor(Cursor);
 
-    ShowWindow(WindowHandle, nCmdShow);
-    UpdateWindow(WindowHandle);
+    DestroyCursor(Cursor);
 
     THREADMANAGER ThreadMgr;
     RECT DeskBounds;
@@ -604,7 +659,9 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
             }
 
             // Re-initialize
-            Ret = OutMgr.InitOutput(WindowHandle, SingleOutput, &OutputCount, &DeskBounds);
+            Ret = OutMgr.InitOutput(ddhndl, SingleOutput, &OutputCount, &DeskBounds);
+            MoveWindow(mainhndl, 0, 0, (DeskBounds.right - DeskBounds.left) / 2, (DeskBounds.bottom - DeskBounds.top) / 2, TRUE);
+
             if (Ret == DUPL_RETURN_SUCCESS)
             {
                 HANDLE SharedHandle = OutMgr.GetSharedHandle();
@@ -717,18 +774,119 @@ bool ProcessCmdline(_Out_ INT* Output)
     return true;
 }
 
-//
-// Window message processor
-//
-LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
-{
+BOOL CALLBACK resizeChildrenProc(HWND hwndChild, LPARAM lParam) {
+    int id = GetWindowLong(hwndChild, GWL_ID);
+    LPRECT parentRect = (LPRECT)lParam;
+    switch (id) {
+        case ddID:
+            MoveWindow(hwndChild, NULL, NULL, parentRect->right * 0.9, parentRect->bottom * 0.9, TRUE);
+            break;
+
+        case dconnID:
+            MoveWindow(hwndChild, NULL, parentRect->bottom - parentRect->bottom * 0.1, parentRect->right * 0.2, parentRect->bottom * 0.1, TRUE);
+            break;
+
+        case connID:
+            MoveWindow(hwndChild, parentRect->left + parentRect->right * 0.2, parentRect->bottom - parentRect->bottom * 0.1, parentRect->right * 0.2, parentRect->bottom * 0.1, TRUE);
+            break;
+
+        case connStatus:
+            MoveWindow(hwndChild, parentRect->right * 0.9, parentRect->bottom * 0.1, parentRect->right * 0.1, parentRect->bottom * 0.1, TRUE);
+            break;
+    }
+    return TRUE;
+}
+
+// main window message processor
+LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
     switch (message)
     {
+        case WM_CREATE:
+        {
+            ddhndl = CreateWindowW(L"ddasample", L"Remote Desktop View",
+                WS_VISIBLE | WS_CHILD,
+                0, 0,
+                WindowRect.right - WindowRect.left, WindowRect.bottom - WindowRect.top,
+                hWnd, (HMENU)ddID, nullptr, nullptr);
+            dconbutton = CreateWindow(
+                L"BUTTON",  // Predefined class; Unicode assumed 
+                L"Disconnect",      // Button text 
+                WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,  // Styles 
+                0,         // x position 
+                WindowRect.bottom - 100,         // y position 
+                100,        // Button width
+                100,        // Button height
+                hWnd,     // Parent window
+                (HMENU)dconnID,       // No menu.
+                nullptr,
+                nullptr);      // Pointer not needed.
+            conbutton = CreateWindow(
+                L"BUTTON",  // Predefined class; Unicode assumed 
+                L"Start Hosting",      // Button text 
+                WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,  // Styles 
+                100,         // x position 
+                WindowRect.bottom - 100,         // y position 
+                100,        // Button width
+                100,        // Button height
+                hWnd,     // Parent window
+                (HMENU)connID,       // No menu.
+                nullptr,
+                nullptr);      // Pointer not needed.
+            conStatus = CreateWindow(
+                L"STATIC",
+                L"No client connected",
+                WS_VISIBLE | WS_CHILD | SS_CENTER,
+                750, 20, 200, 20,
+                hWnd,
+                (HMENU) connStatus,
+                nullptr, nullptr
+            );
+            EnableWindow(dconbutton, false);
+            break;
+        }
         case WM_DESTROY:
         {
             PostQuitMessage(0);
             break;
         }
+        case WM_SIZE:
+        {
+            RECT parentSize;
+            GetClientRect(hWnd, &parentSize);
+            EnumChildWindows(hWnd, resizeChildrenProc, (LPARAM)&parentSize);
+            break;
+        }
+        case WM_COMMAND:
+            switch (LOWORD(wParam)) {
+                case dconnID:
+                {
+                    stopSocket();
+                }
+                case connID:
+                {
+                    initSocket();
+                    if (haveClient) {
+                        SetWindowText(conStatus, L"Client connected");
+                    }
+                    EnableWindow(conbutton, false);
+                    EnableWindow(dconbutton, true);
+                }
+            }
+        default:
+            return DefWindowProc(hWnd, message, wParam, lParam);
+    }
+
+    return 0;
+}
+
+
+//
+// Window message processor
+//
+LRESULT CALLBACK DDWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    switch (message)
+    {
         case WM_SIZE:
         {
             // Tell output manager that window size has changed
@@ -767,6 +925,8 @@ DWORD WINAPI DDProc(_In_ void* Param)
     IMFMediaBuffer* outBuffer;
     DWORD length;
     BYTE* data;
+    int iResult = 0;
+
 
     if (!CurrentDesktop)
     {
@@ -885,7 +1045,7 @@ DWORD WINAPI DDProc(_In_ void* Param)
         {
             // Send frames to the transformer
             if (haveClient) {
-                hr = DispMgr.WriteFrame(SharedSurf, &outBuffer);
+                hr = DispMgr.WriteFrame(SharedSurf, &needFlush, &outBuffer);
                 if (SUCCEEDED(hr)) {
  
                     outBuffer->Lock(&data, NULL, &length);
@@ -893,9 +1053,7 @@ DWORD WINAPI DDProc(_In_ void* Param)
                     while (count > 0) {
                         iResult = sendto(sock, (char*)&data[length - count], min(count, 1400), 0, (sockaddr*)&dest, sizeof(dest));
                         count -= min(length, 1400);
-                        int a;
                         if (iResult == SOCKET_ERROR) {
-                            a = WSAGetLastError();
                             //DisplayMsg(L"Send failed with error \n", L"Send Fail", E_FAIL);
                             //haveClient = false;
                             //return 1;
@@ -967,46 +1125,30 @@ Exit:
 DWORD WINAPI InputProc(_In_ void* Param)
 {
     THREAD_DATA* TData = reinterpret_cast<THREAD_DATA*>(Param);
+    int iResult = 0;
     // Receive until the peer closes the connection
     
     while ((WaitForSingleObjectEx(TData->TerminateThreadsEvent, 0, FALSE) == WAIT_TIMEOUT)) {
-        if (!haveClient) {
-            dest.sin_family = AF_INET;
-            dest.sin_port = htons(DEFAULT_PORT);
-            //inet_pton(AF_INET, "167.234.216.217", &dest.sin_addr.s_addr);
-            inet_pton(AF_INET, "192.168.100.2", &dest.sin_addr.s_addr);
-            sendto(sock, "1", 2, 0, (sockaddr*)&dest, sizeof(dest));
-            recvbuf.resize(recvbuflen);
-            while (!haveClient && (WaitForSingleObjectEx(TData->TerminateThreadsEvent, 0, FALSE) == WAIT_TIMEOUT)) {
+        if (!haveClient && sock != INVALID_SOCKET) {
+            
+        } else if (haveClient) {
+            readFdSet = activeFdSet;
+            int n = select(FD_SETSIZE, &readFdSet, NULL, NULL, &tv);
+            if (n <= 0) {
+                stopSocket();
+            } else {
                 iResult = recvfrom(sock, &recvbuf[0], recvbuflen - 1, 0, NULL, NULL);
-                if (iResult <= 0) {
-                    Sleep(1000);
-                    string str = WSAGetLastError() + "\n";
+                if (iResult < 0) {
+                    string str = to_string(WSAGetLastError()) + "\n";
                     wstring temp = wstring(str.begin(), str.end());
                     OutputDebugString(temp.c_str());
                 }
-                else if (DisplayConfirmation(L"A user has requested to join this session.\n Allow connection?", L"Connection Request") == IDYES) {
-                    //encoder->Flush();
-                    recvbuf[iResult] = '\0';
-                    int newPort = stoi(recvbuf.substr(recvbuf.find(":") + 1, iResult));
-                    dest.sin_port = htons(newPort);
-                    //inet_pton(AF_INET, recvbuf.substr(0, recvbuf.find(":")).c_str(), &dest.sin_addr.s_addr);
-                    inet_pton(AF_INET, "192.168.100.2", &dest.sin_addr.s_addr);
-                    haveClient = true;
-                }
-            }
-        } else {
-            iResult = recvfrom(sock, &recvbuf[0], recvbuflen - 1, 0, NULL, NULL);
-            if (iResult <= 0) {
-                Sleep(5);
-                //OutputDebugString(L"connection closed");
-                //haveClient = false;
-            } else if (recvbuf[0] == '0') {
+                if (recvbuf[0] == '0') {
                 INPUT inputs[1] = {};
                 inputs[0].type = INPUT_KEYBOARD;
                 inputs[0].ki.wVk = getWinCommand(stoi(recvbuf.substr(1, iResult - 1)));
                 SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
-            } else if (recvbuf[0] == '1') {
+                } else if (recvbuf[0] == '1') {
                 INPUT inputs[1] = {};
                 inputs[0].type = INPUT_MOUSE;
                 string x;
@@ -1025,14 +1167,14 @@ DWORD WINAPI InputProc(_In_ void* Param)
                 inputs[0].mi.dy = (int)(65535 * stof(x.c_str()));
                 inputs[0].mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
                 SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
-            } else if (recvbuf[0] == '2') {
+                } else if (recvbuf[0] == '2') {
                 INPUT inputs[1] = {};
                 inputs[0].type = INPUT_MOUSE;
                 inputs[0].mi.dx = 0;
                 inputs[0].mi.dy = 0;
                 inputs[0].mi.dwFlags = MOUSEEVENTF_LEFTDOWN | MOUSEEVENTF_ABSOLUTE;
                 SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
-            } else if (recvbuf[0] == '3') {
+                } else if (recvbuf[0] == '3') {
                 INPUT inputs[1] = {};
                 inputs[0].type = INPUT_MOUSE;
                 inputs[0].mi.dx = 0;
@@ -1059,7 +1201,11 @@ DWORD WINAPI InputProc(_In_ void* Param)
                 inputs[0].ki.dwFlags = KEYEVENTF_KEYUP;
                 inputs[0].ki.wVk = getWinCommand(stoi(recvbuf.substr(1, iResult - 1)));
                 SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
+                } else if (recvbuf[0] == '7') {
+                    OutputDebugString(L"Keep Alive");
+                }
             }
+            
         }
                                  
     }
