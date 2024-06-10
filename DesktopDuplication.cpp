@@ -64,6 +64,12 @@ struct timeval tv;
 
 bool haveClient = false;
 bool needFlush = true;
+BYTE backupBuf[5000000];
+int backupLens[256 * 12];
+int transmitRequest[256 * 12];
+// packet count variables
+int hpCount = 0;
+int lpCount = 0;
 
 WORD getWinCommand(int input) {
     switch(input) {
@@ -476,6 +482,9 @@ int initSocket() {
                 inet_pton(AF_INET, "192.168.100.2", &dest.sin_addr.s_addr);
                 needFlush = true;
                 haveClient = true;
+                lpCount = 0;
+                hpCount = 0;
+                memset(transmitRequest, -1, sizeof(transmitRequest));
             }
         }
     }
@@ -556,6 +565,7 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
         printf("WSAStartup failed with error: %d\n", iResult);
         return 1;
     }
+    memset(transmitRequest, -1, sizeof(transmitRequest));
 
     //set timeout for select
     tv.tv_sec = 1;
@@ -955,7 +965,7 @@ DWORD WINAPI DDProc(_In_ void* Param)
 
     // New display manager
     DispMgr.InitD3D(&TData->DxRes);
-
+ 
     // Obtain handle to sync shared Surface
     HRESULT hr = TData->DxRes.Device->OpenSharedResource(TData->TexSharedHandle, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&SharedSurf));
     if (FAILED (hr))
@@ -1052,13 +1062,45 @@ DWORD WINAPI DDProc(_In_ void* Param)
             // Send frames to the transformer
             if (haveClient) {
                 hr = DispMgr.WriteFrame(SharedSurf, &needFlush, &outBuffer);
+               
                 if (SUCCEEDED(hr)) {
- 
+                    for (int i = 0; i < 256 * 12; i++) {
+                        if (transmitRequest[i] == 0) {
+                            char send[1454] = "";
+                            memcpy(&send[3], (char*)&backupBuf[i * 1400], backupLens[i]);
+                            send[0] = 1;
+                            send[1] = (char)(i / 256);
+                            send[2] = (char)(i % 256);
+                            iResult = sendto(sock, send, backupLens[i] + 3, 0, (sockaddr*)&dest, sizeof(dest));
+                            transmitRequest[i] = 2;
+                        }
+                        else if (transmitRequest[i] != -1) {
+                            transmitRequest[i]--;
+                        }
+                    }
                     outBuffer->Lock(&data, NULL, &length);
                     int count = length;
+                    char send[1454] = "";
                     while (count > 0) {
-                        iResult = sendto(sock, (char*)&data[length - count], min(count, 1400), 0, (sockaddr*)&dest, sizeof(dest));
-                        count -= min(length, 1400);
+                        int nextSub = min(count, 1400);
+                        memcpy(&send[3], (char*)&data[length - count], sizeof(char)*(nextSub));
+                        memcpy(&backupBuf[(hpCount * 256 + lpCount) * 1400], &data[length - count], sizeof(char) * nextSub);
+                        backupLens[hpCount * 256 + lpCount] = nextSub;    
+                        send[0] = 0;
+                        send[1] = hpCount;
+                        send[2] = lpCount;
+                        
+                        iResult = sendto(sock, send, nextSub+3, 0, (sockaddr*)&dest, sizeof(dest));
+                        count -= nextSub;
+                        lpCount++;
+                        if (lpCount > 255) {
+                            hpCount++;
+                            lpCount = 0;
+                            if (hpCount > 11) {
+                                hpCount = 0;
+                            }
+                        }
+                        //Sleep(1);
                         if (iResult == SOCKET_ERROR) {
                             //DisplayMsg(L"Send failed with error \n", L"Send Fail", E_FAIL);
                             //haveClient = false;
@@ -1232,14 +1274,46 @@ DWORD WINAPI InputProc(_In_ void* Param)
                     inputs[0].ki.wVk = getWinCommand(stoi(recvbuf.substr(1, iResult - 1)));
                     SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
                 } else if (recvbuf[0] == '7') {
-                    OutputDebugString(L"Keep Alive");
+                    //OutputDebugString(L"Keep Alive");
+                } else if (recvbuf[0] == '8') { // frame retransmit request
+                    if (haveClient) {
+                        int sHigh, sLow, eHigh, eLow;
+                        if (iResult > 5) {
+                            sHigh = (uint8_t)recvbuf[1];
+                            sLow = (uint8_t)recvbuf[2];
+                            eHigh = (uint8_t)recvbuf[3];
+                            eLow = (uint8_t)recvbuf[4];
+                            if (sHigh < 12 && eHigh < 12) {
+                                int beginning = sHigh * 256 + sLow;
+                                int end = eHigh * 256 + eLow;
+                                for (int i = beginning; i != end; i = (i + 1) % (256 * 12)) {
+                                    transmitRequest[i] = 0;
+                                }
+                            }
+                            else {
+                                OutputDebugString(L"bad input received");
+                                string out = to_string(iResult);
+                                for (int i = 0; i < iResult; i++) {
+                                    out += to_string((uint8_t)recvbuf[i]) + " ";
+                                }
+                                wstring temp = wstring(out.begin(), out.end());
+                                OutputDebugString(temp.c_str()); 
+                            }
+                        }
+                    }
+                } else if (recvbuf[0] == '9') { // frame retransmit request
+                    if (haveClient) {
+                        int index = (uint8_t)(recvbuf[1]) * 256 + (uint8_t)recvbuf[2];
+                        transmitRequest[index] = -1;
+                    }
                 }
-            }
-            
+            }            
         }
+                                 
+    }
     return 0;
 }
-                                 
+
 DWORD WINAPI KeepAliveProc(_In_ void* Param) {
     THREAD_DATA* TData = reinterpret_cast<THREAD_DATA*>(Param);
     while ((WaitForSingleObjectEx(TData->TerminateThreadsEvent, 0, FALSE) == WAIT_TIMEOUT)) {
