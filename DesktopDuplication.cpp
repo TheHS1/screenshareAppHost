@@ -483,9 +483,10 @@ int initSocket() {
 }
 
 void stopSocket() {
+    FD_CLR(sock, &activeFdSet);
     closesocket(sock);
     sock = INVALID_SOCKET;
-    FD_CLR(sock, &activeFdSet);
+    haveClient = false;
     SetWindowText(conStatus, L"Client disconnected");
 
     EnableWindow(conbutton, true);
@@ -864,6 +865,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 case dconnID:
                 {
                     stopSocket();
+                    break;
                 }
                 case connID:
                 {
@@ -873,6 +875,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
                     }
                     EnableWindow(conbutton, false);
                     EnableWindow(dconbutton, true);
+                    break;
                 }
             }
         default:
@@ -1067,6 +1070,7 @@ DWORD WINAPI DDProc(_In_ void* Param)
                 }
                 SafeRelease(&outBuffer);
             }
+
             //GetCounter();
 
             if (FAILED(hr))
@@ -1132,24 +1136,34 @@ DWORD WINAPI InputProc(_In_ void* Param)
     // Receive until the peer closes the connection
     
     while ((WaitForSingleObjectEx(TData->TerminateThreadsEvent, 0, FALSE) == WAIT_TIMEOUT)) {
-        if (!haveClient && sock != INVALID_SOCKET) {
-            
+        if (!haveClient || sock == INVALID_SOCKET) {
+            Sleep(500);
         } else if (haveClient) {
             readFdSet = activeFdSet;
-            int n = select(FD_SETSIZE, &readFdSet, NULL, NULL, &tv);
-            if (n <= 0) {
+            iResult = select(FD_SETSIZE, &readFdSet, NULL, NULL, &tv);
+            if (iResult < 0) {
+                string str = to_string(WSAGetLastError()) + "\n";
+                wstring temp = wstring(str.begin(), str.end());
+                OutputDebugString(temp.c_str());
+            }
+            if (iResult == 0) {
                 stopSocket();
             } else {
                 iResult = recvfrom(sock, &recvbuf[0], recvbuflen - 1, 0, NULL, NULL);
-                if (iResult < 0) {
+                if (iResult <= 0) {
                     string str = to_string(WSAGetLastError()) + "\n";
                     wstring temp = wstring(str.begin(), str.end());
                     OutputDebugString(temp.c_str());
-                }
-                if (recvbuf[0] == '0') {
+                } else if (recvbuf[0] == '0') {
                     INPUT inputs[1] = {};
                     inputs[0].type = INPUT_KEYBOARD;
-                    inputs[0].ki.wVk = getWinCommand(stoi(recvbuf.substr(1, iResult - 1)));
+                    int command;
+                    try {
+                        command = stoi(recvbuf.substr(1, iResult - 1));
+                    } catch (const exception& e) {
+                        continue;
+                    }
+                    inputs[0].ki.wVk = getWinCommand(command);
                     SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
                 } else if (recvbuf[0] == '1') {
                     INPUT inputs[1] = {};
@@ -1160,14 +1174,27 @@ DWORD WINAPI InputProc(_In_ void* Param)
                         x += recvbuf[i];
                         i++;
                     }
-                    inputs[0].mi.dx = (int)(65535 * stof(x.c_str()));
+                    float per;
+                    try {
+                        per = stof(x.c_str());
+                    }
+                    catch (const exception& e) {
+                        continue;
+                    }
+                    inputs[0].mi.dx = (int)(65535 * per);
                     i++;
                     x = "";
                     while (i < iResult) {
                         x += recvbuf[i];
                         i++;
                     }
-                    inputs[0].mi.dy = (int)(65535 * stof(x.c_str()));
+                    try {
+                        per = stof(x.c_str());
+                    }
+                    catch (const exception& e) {
+                        continue;
+                    }
+                    inputs[0].mi.dy = (int)(65535 * per);
                     inputs[0].mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
                     SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
                 } else if (recvbuf[0] == '2') {
@@ -1210,6 +1237,8 @@ DWORD WINAPI InputProc(_In_ void* Param)
             }
             
         }
+    return 0;
+}
                                  
 DWORD WINAPI KeepAliveProc(_In_ void* Param) {
     THREAD_DATA* TData = reinterpret_cast<THREAD_DATA*>(Param);
