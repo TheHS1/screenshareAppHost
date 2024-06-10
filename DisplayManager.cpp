@@ -25,10 +25,9 @@ DISPLAYMANAGER::DISPLAYMANAGER() : m_Device(nullptr),
                                    m_pTexture(nullptr)
 {
     HRESULT hr = MFStartup(MF_VERSION, 0);
-    if (SUCCEEDED(hr)) {
-        m_encoder = new H264Encoder2();
-        HRESULT hr = m_encoder->Initialize(VIDEO_WIDTH, VIDEO_HEIGHT);
-    }
+    m_encoder = new H264Encoder2();
+    hr = m_encoder->Initialize(VIDEO_WIDTH, VIDEO_HEIGHT);
+    rtStart = 0;
 }
 
 //
@@ -571,6 +570,16 @@ void DISPLAYMANAGER::CleanRefs()
         m_RTV = nullptr;
     }
 
+    if (m_converter) {
+        //delete m_converter;
+        m_converter = nullptr;
+    }
+
+    if (m_pTexture) {
+        m_pTexture->Release();
+        m_pTexture = nullptr;
+    }
+
+
     delete m_encoder;
-    delete m_converter;
 }
