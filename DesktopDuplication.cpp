@@ -1211,6 +1211,13 @@ DWORD WINAPI InputProc(_In_ void* Param)
             
         }
                                  
+DWORD WINAPI KeepAliveProc(_In_ void* Param) {
+    THREAD_DATA* TData = reinterpret_cast<THREAD_DATA*>(Param);
+    while ((WaitForSingleObjectEx(TData->TerminateThreadsEvent, 0, FALSE) == WAIT_TIMEOUT)) {
+        if (haveClient) {
+            sendto(sock, "alive", 6, 0, (sockaddr*)&dest, sizeof(dest));
+            Sleep(200);
+        }
     }
     return 0;
 }
