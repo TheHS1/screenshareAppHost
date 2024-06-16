@@ -23,24 +23,25 @@
 
 #define DEFAULT_PORT 3478
 
-#include <limits.h>
-
 #include "DisplayManager.h"
 #include "DuplicationManager.h"
 #include "H264Encoder2.h"
 #include "Preproc.h"
 #include "OutputManager.h"
 #include "ThreadManager.h"
+#include "SDL_keycode.h"
 #include <mfapi.h>
 #include <fstream>
 #include <string>
-#include "SDL_keycode.h"
+#include <sstream>
+#include <vector>
 
 #pragma comment(lib, "mfplat")
 #pragma comment(lib, "mfuuid")
 
 #define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12)
-
+#define maxByteVal 256
+constexpr auto maxPacketCount = 256 * 60;
 
 #define ddID 2
 #define dconnID 3
@@ -64,12 +65,20 @@ struct timeval tv;
 
 bool haveClient = false;
 bool needFlush = true;
-BYTE backupBuf[5000000];
-int backupLens[256 * 12];
-int transmitRequest[256 * 12];
-// packet count variables
+BYTE backupBuf[maxPacketCount * 1450];
+int backupLens[maxPacketCount];
+int transmitRequest[maxPacketCount];
+
+// packet input variables
 int hpCount = 0;
 int lpCount = 0;
+
+enum packetType {
+    FRAME = 0,
+    FRAMERETRANSMIT = 1,
+    KEEPALIVE = 2,
+};
+
 
 WORD getWinCommand(int input) {
     switch(input) {
@@ -1064,13 +1073,13 @@ DWORD WINAPI DDProc(_In_ void* Param)
                 hr = DispMgr.WriteFrame(SharedSurf, &needFlush, &outBuffer);
                
                 if (SUCCEEDED(hr)) {
-                    for (int i = 0; i < 256 * 12; i++) {
+                    for (int i = 0; i < maxPacketCount; i++) {
                         if (transmitRequest[i] == 0) {
                             char send[1454] = "";
                             memcpy(&send[3], (char*)&backupBuf[i * 1400], backupLens[i]);
-                            send[0] = 1;
-                            send[1] = (char)(i / 256);
-                            send[2] = (char)(i % 256);
+                            send[0] = (char)FRAMERETRANSMIT;
+                            send[1] = (char)(i / maxByteVal);
+                            send[2] = (char)(i % maxByteVal);
                             iResult = sendto(sock, send, backupLens[i] + 3, 0, (sockaddr*)&dest, sizeof(dest));
                             transmitRequest[i] = 2;
                         }
@@ -1084,9 +1093,9 @@ DWORD WINAPI DDProc(_In_ void* Param)
                     while (count > 0) {
                         int nextSub = min(count, 1400);
                         memcpy(&send[3], (char*)&data[length - count], sizeof(char)*(nextSub));
-                        memcpy(&backupBuf[(hpCount * 256 + lpCount) * 1400], &data[length - count], sizeof(char) * nextSub);
-                        backupLens[hpCount * 256 + lpCount] = nextSub;    
-                        send[0] = 0;
+                        memcpy(&backupBuf[(hpCount * maxByteVal + lpCount) * 1400], &data[length - count], sizeof(char) * nextSub);
+                        backupLens[hpCount * maxByteVal + lpCount] = nextSub;    
+                        send[0] = FRAME;
                         send[1] = hpCount;
                         send[2] = lpCount;
                         
@@ -1096,7 +1105,7 @@ DWORD WINAPI DDProc(_In_ void* Param)
                         if (lpCount > 255) {
                             hpCount++;
                             lpCount = 0;
-                            if (hpCount > 11) {
+                            if (hpCount > 59) {
                                 hpCount = 0;
                             }
                         }
@@ -1187,9 +1196,11 @@ DWORD WINAPI InputProc(_In_ void* Param)
                 string str = to_string(WSAGetLastError()) + "\n";
                 wstring temp = wstring(str.begin(), str.end());
                 OutputDebugString(temp.c_str());
+                continue;
             }
             if (iResult == 0) {
                 stopSocket();
+                continue;
             } else {
                 iResult = recvfrom(sock, &recvbuf[0], recvbuflen - 1, 0, NULL, NULL);
                 if (iResult <= 0) {
@@ -1316,12 +1327,15 @@ DWORD WINAPI InputProc(_In_ void* Param)
 
 DWORD WINAPI KeepAliveProc(_In_ void* Param) {
     THREAD_DATA* TData = reinterpret_cast<THREAD_DATA*>(Param);
+    int iResult;
+    string send;
+    send += (char)KEEPALIVE;
     while ((WaitForSingleObjectEx(TData->TerminateThreadsEvent, 0, FALSE) == WAIT_TIMEOUT)) {
         if (haveClient) {
-            sendto(sock, "alive", 6, 0, (sockaddr*)&dest, sizeof(dest));
+            iResult = sendto(sock, send.c_str(), send.length() + 1, 0, (sockaddr*)&dest, sizeof(dest));
+        }
             Sleep(200);
         }
-    }
     return 0;
 }
 
