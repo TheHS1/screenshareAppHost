@@ -22,7 +22,8 @@ DISPLAYMANAGER::DISPLAYMANAGER() : m_Device(nullptr),
                                    m_SamplerLinear(nullptr),
                                    m_DirtyVertexBufferAlloc(nullptr),
                                    m_DirtyVertexBufferAllocSize(0),
-                                   m_pTexture(nullptr)
+                                   m_pTexture(nullptr),
+                                   m_converter(nullptr)
 {
     HRESULT hr = MFStartup(MF_VERSION, 0);
     m_encoder = new H264Encoder2();
@@ -571,7 +572,7 @@ void DISPLAYMANAGER::CleanRefs()
     }
 
     if (m_converter) {
-        //delete m_converter;
+        delete m_converter;
         m_converter = nullptr;
     }
 
