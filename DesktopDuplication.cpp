@@ -14,6 +14,7 @@
 #include <winuser.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <mutex>
 #include <thread>
 
 // Need to link with Ws2_32.lib, Mswsock.lib, and Advapi32.lib
@@ -30,8 +31,9 @@
 #include "OutputManager.h"
 #include "ThreadManager.h"
 #include "SDL_keycode.h"
-#include <mfapi.h>
+#include <chrono>
 #include <fstream>
+#include <mfapi.h>
 #include <string>
 #include <sstream>
 #include <vector>
@@ -67,7 +69,14 @@ bool haveClient = false;
 bool needFlush = true;
 BYTE backupBuf[maxPacketCount * 1450];
 int backupLens[maxPacketCount];
-int transmitRequest[maxPacketCount];
+mutex retransMutex;
+const chrono::duration<int, milli> retransmitTimeout = 50ms;
+struct retransmitRequest {
+    chrono::time_point<chrono::steady_clock> start;
+    chrono::duration<int, milli> elapsed = 0ms;
+};
+map<int, retransmitRequest> retransmits;
+
 
 // packet input variables
 int hpCount = 0;
@@ -504,12 +513,11 @@ int initSocket() {
                 int newPort = stoi(recvbuf.substr(recvbuf.find(":") + 1, iResult));
                 dest.sin_port = htons(newPort);
                 //inet_pton(AF_INET, recvbuf.substr(0, recvbuf.find(":")).c_str(), &dest.sin_addr.s_addr);
-                inet_pton(AF_INET, "192.168.100.2", &dest.sin_addr.s_addr);
                 needFlush = true;
+                retransMutex.lock();
+                retransmits.clear();
+                retransMutex.unlock();
                 haveClient = true;
-                lpCount = 0;
-                hpCount = 0;
-                memset(transmitRequest, -1, sizeof(transmitRequest));
             }
         }
     }
@@ -1089,20 +1097,6 @@ DWORD WINAPI DDProc(_In_ void* Param)
                 hr = DispMgr.WriteFrame(SharedSurf, &needFlush, &outBuffer);
                
                 if (SUCCEEDED(hr)) {
-                    for (int i = 0; i < maxPacketCount; i++) {
-                        if (transmitRequest[i] == 0) {
-                            char send[1454] = "";
-                            memcpy(&send[3], (char*)&backupBuf[i * 1400], backupLens[i]);
-                            send[0] = (char)FRAMERETRANSMIT;
-                            send[1] = (char)(i / maxByteVal);
-                            send[2] = (char)(i % maxByteVal);
-                            iResult = sendto(sock, send, backupLens[i] + 3, 0, (sockaddr*)&dest, sizeof(dest));
-                            transmitRequest[i] = 3;
-                        }
-                        else if (transmitRequest[i] != -1) {
-                            transmitRequest[i]--;
-                        }
-                    }
                     outBuffer->Lock(&data, NULL, &length);
                     int count = length;
                     char send[1454] = "";
@@ -1231,6 +1225,53 @@ DWORD WINAPI InputProc(_In_ void* Param)
                 OutputDebugString(L"Packet too short");
                 continue;
             }
+
+            // unnumbered packets
+            if (recvbuf[0] == 3) {
+                if (recvbuf[1] == '1' && iResult >= 5) { // mouse motion
+                    INPUT inputs[1] = {};
+                    inputs[0].type = INPUT_MOUSE;
+                    string x;
+                    int i = 2;
+                    while (i < iResult && recvbuf[i] != 'a') {
+                        x += recvbuf[i];
+                        i++;
+                    }
+                    float per;
+                    try {
+                        per = stof(x.c_str());
+                    }
+                    catch (const exception& e) {
+                        continue;
+                    }
+                    inputs[0].mi.dx = (int)(65535 * per);
+                    i++;
+                    x = "";
+                    while (i < iResult) {
+                        x += recvbuf[i];
+                        i++;
+                    }
+                    try {
+                        per = stof(x.c_str());
+                    }
+                    catch (const exception& e) {
+                        continue;
+                    }
+                    inputs[0].mi.dy = (int)(65535 * per);
+                    inputs[0].mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
+                    SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
+                } else if (recvbuf[1] == '9') { // frame retransmit request
+                    int index = (uint8_t)(recvbuf[2]) * maxByteVal + (uint8_t)recvbuf[3];
+                        if (index < maxPacketCount) {
+                            retransMutex.lock();
+                            retransmits.erase(index);
+                            retransMutex.unlock();
+                        }
+                    string str = to_string(index) + " acknowledged\n";
+                    wstring temp = wstring(str.begin(), str.end());
+                    OutputDebugString(temp.c_str());
+                }
+            } else {
             index = (int)((uint8_t)(recvbuf[1]) * maxByteVal + (uint8_t)recvbuf[2]);
             
             memcpy(&inputBack[index * 30], &recvbuf[3], iResult - 3);
@@ -1323,39 +1364,6 @@ DWORD WINAPI InputProc(_In_ void* Param)
                     inputs[0].ki.wVk = getWinCommand(command);
                     SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
                 }
-                else if (recvbuf[3] == '1' && iResult >= 5) {
-                    INPUT inputs[1] = {};
-                    inputs[0].type = INPUT_MOUSE;
-                    string x;
-                    int i = 4;
-                    while (i < iResult && recvbuf[i] != 'a') {
-                        x += recvbuf[i];
-                        i++;
-                    }
-                    float per;
-                    try {
-                        per = stof(x.c_str());
-                    }
-                    catch (const exception& e) {
-                        continue;
-                    }
-                    inputs[0].mi.dx = (int)(65535 * per);
-                    i++;
-                    x = "";
-                    while (i < iResult) {
-                        x += recvbuf[i];
-                        i++;
-                    }
-                    try {
-                        per = stof(x.c_str());
-                    }
-                    catch (const exception& e) {
-                        continue;
-                    }
-                    inputs[0].mi.dy = (int)(65535 * per);
-                    inputs[0].mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
-                    SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
-                }
                 else if (recvbuf[3] == '2' && iResult >= 5) {
                     INPUT inputs[1] = {};
                     inputs[0].type = INPUT_MOUSE;
@@ -1402,8 +1410,24 @@ DWORD WINAPI InputProc(_In_ void* Param)
                     inputs[0].ki.wVk = getWinCommand(command);
                     SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
                 }
+                    else if (recvbuf[3] == '7' && iResult >= 6) { // frame retransmit request
+                        for (int i = 4; i < iResult; i += 2) {
+                            if (i + 1 < iResult) {
+                                index = (uint8_t)(recvbuf[i]) * maxByteVal + (uint8_t)(recvbuf[i + 1]);
+                                string str = "Retransmit " + to_string(index) + "\n";
+                                wstring temp = wstring(str.begin(), str.end());
+                                OutputDebugString(temp.c_str());
+                                if (index < maxPacketCount) {
+                                    retransmitRequest req;
+                                    req.start = chrono::steady_clock::now();
+                                    retransMutex.lock();
+                                    retransmits.emplace(index, req);
+                                    retransMutex.unlock();
+                                }
+                            }
+                        }
+                    }
                 else if (recvbuf[3] == '8' && iResult >= 8) { // frame retransmit request
-                    if (haveClient) {
                         int sHigh, sLow, eHigh, eLow;
                         if (iResult >= 8) {
                             sHigh = (uint8_t)recvbuf[4];
@@ -1413,11 +1437,15 @@ DWORD WINAPI InputProc(_In_ void* Param)
                             if (sHigh < 60 && eHigh < 60) {
                                 int beginning = sHigh * maxByteVal + sLow;
                                 int end = eHigh * maxByteVal + eLow;
-                                /*string str = to_string(beginning) + " " + to_string(end) + " requested\n";
+                                string str = to_string(beginning) + " " + to_string(end) + " requested\n";
                                 wstring temp = wstring(str.begin(), str.end());
-                                OutputDebugString(temp.c_str());*/
+                                OutputDebugString(temp.c_str());
                                 for (int i = beginning; i != end; i = (i + 1) % maxPacketCount) {
-                                    transmitRequest[i] = 0;
+                                    retransmitRequest req;
+                                    req.start = chrono::steady_clock::now();
+                                    retransMutex.lock();
+                                    retransmits.emplace(i, req);
+                                    retransMutex.unlock();
                                 }
                             }
                             else {
@@ -1431,25 +1459,19 @@ DWORD WINAPI InputProc(_In_ void* Param)
                             }
                             }
                         }
-                    }
-                else if (recvbuf[3] == '9') { // frame retransmit request
-                    if (haveClient) {
-                        int index = (uint8_t)(recvbuf[4]) * maxByteVal + (uint8_t)recvbuf[5];
-                        if (index < maxPacketCount) {
-                        transmitRequest[index] = -1;
-                    }
-                        string str = to_string(index) + " acknowledged\n";
+                    
+                    visited[packetPos] = -1;
+                    string str = "Packet pos visit: " + to_string(packetPos) + '\n';
                         wstring temp = wstring(str.begin(), str.end());
                         OutputDebugString(temp.c_str());
-                    }
-                }
-                visited[packetPos] = -1;
                 packetPos++;
                 if (packetPos >= maxPacketCount) {
                     packetPos = 0;
                 }
             }            
         }
+                                 
+    }
                                  
     }
     return 0;
@@ -1466,6 +1488,45 @@ DWORD WINAPI KeepAliveProc(_In_ void* Param) {
         }
             Sleep(200);
         }
+    return 0;
+}
+
+DWORD WINAPI HandleRetransmitsProc(_In_ void* Param) {
+    THREAD_DATA* TData = reinterpret_cast<THREAD_DATA*>(Param);
+    int iResult;
+    while ((WaitForSingleObjectEx(TData->TerminateThreadsEvent, 0, FALSE) == WAIT_TIMEOUT)) {
+        if (haveClient) {
+            chrono::duration<int, milli> min = retransmitTimeout;
+            auto start = chrono::steady_clock::now();
+            retransMutex.lock();
+            for (auto it = retransmits.begin(); it != retransmits.end(); it++) {
+                if (it->second.elapsed < min) {
+                    min = it->second.elapsed;
+                }
+            }
+            retransMutex.unlock();
+            this_thread::sleep_for(min);
+            auto end = chrono::steady_clock::now();
+            auto passed = end - start;
+            retransMutex.lock();
+            for (auto it = retransmits.begin(); it != retransmits.end(); it++) {
+                it->second.elapsed -= chrono::milliseconds(passed.count() / 1000000);
+                if (it->second.elapsed.count() <= 0) {
+                    stringstream send;
+                    send << (char) FRAMERETRANSMIT << (char)(it->first / maxByteVal) << (char)(it->first % maxByteVal); 
+                    for (int i = 0; i < backupLens[it->first]; i++) {
+                        send << (char)(backupBuf[it->first * 1400 + i]);
+                    }
+                    iResult = sendto(sock, send.str().c_str(), backupLens[it->first] + 3, 0, (sockaddr*)&dest, sizeof(dest));
+                    it->second.elapsed = retransmitTimeout;
+                }
+            }
+            retransMutex.unlock();
+
+        } else {
+            Sleep(100);
+        }
+    }
     return 0;
 }
 

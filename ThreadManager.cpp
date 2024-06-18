@@ -10,6 +10,7 @@
 DWORD WINAPI DDProc(_In_ void* Param);
 DWORD WINAPI InputProc(_In_ void* Param);
 DWORD WINAPI KeepAliveProc(_In_ void* Param);
+DWORD WINAPI HandleRetransmitsProc(_In_ void* Param);
 
 THREADMANAGER::THREADMANAGER() : m_ThreadCount(0),
                                  m_ThreadHandles(nullptr),
@@ -50,7 +51,7 @@ void THREADMANAGER::Clean()
 
     if (m_ThreadData)
     {
-        for (UINT i = 0; i < m_ThreadCount - 2; ++i)
+        for (UINT i = 0; i < m_ThreadCount - 3; ++i)
         {
             CleanDx(&m_ThreadData[i].DxRes);
         }
@@ -108,7 +109,7 @@ void THREADMANAGER::CleanDx(_Inout_ DX_RESOURCES* Data)
 //
 DUPL_RETURN THREADMANAGER::Initialize(INT SingleOutput, UINT OutputCount, HANDLE UnexpectedErrorEvent, HANDLE ExpectedErrorEvent, HANDLE TerminateThreadsEvent, HANDLE SharedHandle, _In_ RECT* DesktopDim)
 {
-    m_ThreadCount = OutputCount + 2;
+    m_ThreadCount = OutputCount + 3;
     m_ThreadHandles = new (std::nothrow) HANDLE[m_ThreadCount];
     m_ThreadData = new (std::nothrow) THREAD_DATA[m_ThreadCount];
     if (!m_ThreadHandles || !m_ThreadData)
@@ -118,7 +119,7 @@ DUPL_RETURN THREADMANAGER::Initialize(INT SingleOutput, UINT OutputCount, HANDLE
 
     // Create appropriate # of threads for duplication
     DUPL_RETURN Ret = DUPL_RETURN_SUCCESS;
-    for (UINT i = 0; i < m_ThreadCount - 2; ++i)
+    for (UINT i = 0; i < OutputCount; ++i)
     {
         m_ThreadData[i].UnexpectedErrorEvent = UnexpectedErrorEvent;
         m_ThreadData[i].ExpectedErrorEvent = ExpectedErrorEvent;
@@ -154,6 +155,12 @@ DUPL_RETURN THREADMANAGER::Initialize(INT SingleOutput, UINT OutputCount, HANDLE
     m_ThreadData[OutputCount+1].TerminateThreadsEvent = TerminateThreadsEvent;
     m_ThreadHandles[OutputCount+1] = CreateThread(nullptr, 0, KeepAliveProc, &m_ThreadData[OutputCount+1], 0, &ThreadId);
     if (m_ThreadHandles[OutputCount+1] == nullptr)
+    {
+        return ProcessFailure(nullptr, L"Failed to create thread", L"Error", E_FAIL);
+    }
+    m_ThreadData[OutputCount + 2].TerminateThreadsEvent = TerminateThreadsEvent;
+    m_ThreadHandles[OutputCount + 2] = CreateThread(nullptr, 0, HandleRetransmitsProc, &m_ThreadData[OutputCount + 2], 0, &ThreadId);
+    if (m_ThreadHandles[OutputCount + 2] == nullptr)
     {
         return ProcessFailure(nullptr, L"Failed to create thread", L"Error", E_FAIL);
     }
