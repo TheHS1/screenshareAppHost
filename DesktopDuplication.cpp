@@ -604,7 +604,7 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
     memset(transmitRequest, -1, sizeof(transmitRequest));
 
     //set timeout for select
-    tv.tv_sec = 1;
+    tv.tv_sec = 5;
     tv.tv_usec = 0;
 
     // Register class
