@@ -475,6 +475,11 @@ void DYNAMIC_WAIT::Wait()
     m_WaitCountInCurrentBand++;
 }
 
+void printDebugMessage(string str) {
+    wstring temp = wstring(str.begin(), str.end());
+    OutputDebugString(temp.c_str());
+}
+
 int initSocket() {
     haveClient = false;
     memset(visited, -1, sizeof(visited));
@@ -504,9 +509,7 @@ int initSocket() {
         while (!haveClient) {
             iResult = recvfrom(sock, &recvbuf[0], recvbuflen - 1, 0, NULL, NULL);
             if (iResult <= 0) {
-                string str = to_string(WSAGetLastError()) + "\n";
-                wstring temp = wstring(str.begin(), str.end());
-                OutputDebugString(temp.c_str());
+                printDebugMessage(to_string(WSAGetLastError()) + "\n");
             }
             else if (DisplayConfirmation(L"A user has requested to join this session.\n Allow connection?", L"Connection Request") == IDYES) {
                 recvbuf[iResult] = '\0';
@@ -1203,9 +1206,7 @@ DWORD WINAPI InputProc(_In_ void* Param)
             readFdSet = activeFdSet;
             iResult = select(FD_SETSIZE, &readFdSet, NULL, NULL, &tv);
             if (iResult < 0) {
-                string str = to_string(WSAGetLastError()) + "\n";
-                wstring temp = wstring(str.begin(), str.end());
-                OutputDebugString(temp.c_str());
+                printDebugMessage(to_string(WSAGetLastError()) + "\n");
                 continue;
             }
             if (iResult == 0) {
@@ -1267,15 +1268,14 @@ DWORD WINAPI InputProc(_In_ void* Param)
                             retransmits.erase(index);
                             retransMutex.unlock();
                         }
-                    string str = to_string(index) + " acknowledged\n";
-                    wstring temp = wstring(str.begin(), str.end());
-                    OutputDebugString(temp.c_str());
+                    printDebugMessage(to_string(index) + " acknowledged\n");
                 }
             } else {
             index = (int)((uint8_t)(recvbuf[1]) * maxByteVal + (uint8_t)recvbuf[2]);
             
             memcpy(&inputBack[index * 30], &recvbuf[3], iResult - 3);
             visited[index] = iResult - 3;
+                printDebugMessage(to_string(index) + " received\n");
             if (recvbuf[0] == 1) {
                 auto match = find(unorderedPack.begin(), unorderedPack.end(), index);
                 if (match != unorderedPack.end()) {
@@ -1288,6 +1288,7 @@ DWORD WINAPI InputProc(_In_ void* Param)
                             stringstream send;
                             send << (char)INPUTREQIND;
                             for (auto it = unorderedPack.begin(); it != unorderedPack.end(); it++) {
+                                    printDebugMessage(to_string(*it) + " asking for retransmit\n");
                                 send << (char)(*it / maxByteVal);
                                 send << (char)(*it % maxByteVal);
 
@@ -1317,20 +1318,10 @@ DWORD WINAPI InputProc(_In_ void* Param)
                             }
                         }
                         else {
-                            string str = to_string(prevIndex) + "\n" + to_string(index) + " missing\n";
-                            wstring temp = wstring(str.begin(), str.end());
-                            OutputDebugString(temp.c_str());
+                                printDebugMessage(to_string(prevIndex) + "\n" + to_string(index) + " missing\n");
                             stringstream send;
                             send << (char)INPUTREQUEST << (char)(((prevIndex + 1) % maxPacketCount) / maxByteVal) << (char)(((prevIndex + 1) % maxPacketCount) % maxByteVal) << (char)(recvbuf[1]) << (char)(recvbuf[2]);
-                            stringstream debug;
-                            for (int i = 0; i < send.str().length(); i++) {
-                                debug << to_string(send.str()[i]) << " ";
-                            }
-                            debug << '\n';
-                            str = debug.str();
-                            temp = wstring(str.begin(), str.end());
-                            OutputDebugString(temp.c_str());
-                            sendto(sock, send.str().c_str(), send.str().size() + 1, 0, (sockaddr*)&dest, sizeof(dest));
+                                sendPacket(send.str(), INPUTREQUEST);
                         }
                     }
                     
@@ -1340,15 +1331,9 @@ DWORD WINAPI InputProc(_In_ void* Param)
             } else if (recvbuf[0] == 2) {
                 stringstream send;
                 send << (char)ACKNOWLEDGE << recvbuf[1] << recvbuf[2];
+                    printDebugMessage("Sending acknowledgement" + to_string((uint8_t)recvbuf[1] * maxByteVal + (uint8_t)recvbuf[2]));
                 sendto(sock, send.str().c_str(), send.str().size() + 1, 0, (sockaddr*)&dest, sizeof(dest));
             } 
-
-            /*if (iResult <= 0) {
-                    string str = to_string(WSAGetLastError()) + "\n";
-                    wstring temp = wstring(str.begin(), str.end());
-                    OutputDebugString(temp.c_str());
-                continue;
-            }*/
 
             while (visited[packetPos] != -1) {
                 if (recvbuf[3] == '0' && iResult >= 5) {
@@ -1450,20 +1435,16 @@ DWORD WINAPI InputProc(_In_ void* Param)
                             }
                             else {
                                 OutputDebugString(L"bad input received");
-                                string out = to_string(iResult);
-                                for (int i = 0; i < iResult; i++) {
-                                    out += to_string((uint8_t)recvbuf[i]) + " ";
-                                }
-                                wstring temp = wstring(out.begin(), out.end());
-                                OutputDebugString(temp.c_str() + '\n');
+                            string out = to_string(visited[packetPos]);
+                            for (int i = 0; i < visited[packetPos]; i++) {
+                                out += to_string((uint8_t)inputBack[packetPos * 30 + i]) + " ";
                             }
+                            printDebugMessage(out);
                             }
                         }
                     
                     visited[packetPos] = -1;
-                    string str = "Packet pos visit: " + to_string(packetPos) + '\n';
-                        wstring temp = wstring(str.begin(), str.end());
-                        OutputDebugString(temp.c_str());
+                    printDebugMessage("Packet pos visit: " + to_string(packetPos) + '\n');
                 packetPos++;
                 if (packetPos >= maxPacketCount) {
                     packetPos = 0;
