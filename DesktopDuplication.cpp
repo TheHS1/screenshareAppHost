@@ -70,7 +70,7 @@ bool needFlush = true;
 BYTE backupBuf[maxPacketCount * 1450];
 int backupLens[maxPacketCount];
 mutex retransMutex;
-const chrono::duration<int, milli> retransmitTimeout = 50ms;
+const chrono::duration<int, milli> retransmitTimeout = 300ms;
 struct retransmitRequest {
     chrono::time_point<chrono::steady_clock> start;
     chrono::duration<int, milli> elapsed = 0ms;
