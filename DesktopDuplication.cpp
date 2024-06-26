@@ -73,7 +73,7 @@ mutex retransMutex;
 const chrono::duration<int, milli> retransmitTimeout = 300ms;
 struct retransmitRequest {
     chrono::time_point<chrono::steady_clock> start;
-    chrono::duration<int, milli> elapsed = 0ms;
+    chrono::duration<int, milli> elapsed = retransmitTimeout;
 };
 map<int, retransmitRequest> retransmits;
 
@@ -81,6 +81,7 @@ map<int, retransmitRequest> retransmits;
 // packet input variables
 int hpCount = 0;
 int lpCount = 0;
+mutex sendMutex;
 int prevIndex = -1;
 int index = 0;
 int packetPos = 0;
@@ -538,6 +539,27 @@ void stopSocket() {
     EnableWindow(dconbutton, false);
 }
 
+void sendPacket(string toSend, packetType type) {
+    lock_guard<mutex> lock{sendMutex};
+    stringstream send;
+    send << (char)type << (char)hpCount << (char)lpCount << toSend;
+    if (type == INPUTREQUEST) {
+        printDebugMessage("Sending input request with index " + to_string(hpCount * maxByteVal + lpCount));
+    }
+
+    memcpy(&backupBuf[(hpCount * maxByteVal + lpCount) * 1400], toSend.c_str(), toSend.length());
+    backupLens[hpCount * maxByteVal + lpCount] = toSend.length();
+
+    int iResult = sendto(sock, send.str().c_str(), send.str().length(), 0, (sockaddr*)&dest, sizeof(dest));
+    lpCount++;
+    if (lpCount > 255) {
+        hpCount++;
+        lpCount = 0;
+        if (hpCount > 59) {
+            hpCount = 0;
+        }
+    }
+}
 //
 // Program entry point
 //
@@ -601,7 +623,6 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
         printf("WSAStartup failed with error: %d\n", iResult);
         return 1;
     }
-    memset(transmitRequest, -1, sizeof(transmitRequest));
 
     //set timeout for select
     tv.tv_sec = 5;
@@ -1096,44 +1117,27 @@ DWORD WINAPI DDProc(_In_ void* Param)
         if (SUCCEEDED(hr))
         {
             // Send frames to the transformer
-            if (haveClient) {
+            retransMutex.lock();
                 hr = DispMgr.WriteFrame(SharedSurf, &needFlush, &outBuffer);
                
                 if (SUCCEEDED(hr)) {
                     outBuffer->Lock(&data, NULL, &length);
                     int count = length;
-                    char send[1454] = "";
                     while (count > 0) {
+                        stringstream send;
                         int nextSub = min(count, 1400);
-                        memcpy(&send[3], (char*)&data[length - count], sizeof(char)*(nextSub));
-                        memcpy(&backupBuf[(hpCount * maxByteVal + lpCount) * 1400], &data[length - count], sizeof(char) * nextSub);
-                        backupLens[hpCount * maxByteVal + lpCount] = nextSub;    
-                        send[0] = FRAME;
-                        send[1] = hpCount;
-                        send[2] = lpCount;
-                        
-                        iResult = sendto(sock, send, nextSub+3, 0, (sockaddr*)&dest, sizeof(dest));
+                        for (int i = 0; i < nextSub; i++) {
+                            send << data[length - count + i];
+                        }
+                        sendPacket(send.str(), FRAME);
                         count -= nextSub;
-                        lpCount++;
-                        if (lpCount > 255) {
-                            hpCount++;
-                            lpCount = 0;
-                            if (hpCount > 59) {
-                                hpCount = 0;
-                            }
-                        }
-                        //Sleep(1);
-                        if (iResult == SOCKET_ERROR) {
-                            //DisplayMsg(L"Send failed with error \n", L"Send Fail", E_FAIL);
-                            //haveClient = false;
-                            //return 1;
-                        }
                     }
 
                     outBuffer->Unlock();
                 }
                 SafeRelease(&outBuffer);
             }
+            retransMutex.unlock();
 
             //GetCounter();
 
@@ -1215,10 +1219,6 @@ DWORD WINAPI InputProc(_In_ void* Param)
             }
             iResult = recvfrom(sock, &recvbuf[0], recvbuflen - 1, 0, NULL, NULL);
             
-            if (iResult <= 0 || iResult > 30) { // If error or too many characters returned
-                OutputDebugString(L"Bad length packet");
-                continue;
-            }
             if ((uint8_t)recvbuf[0] == 0) {
                 continue;
             }
@@ -1261,198 +1261,216 @@ DWORD WINAPI InputProc(_In_ void* Param)
                     inputs[0].mi.dy = (int)(65535 * per);
                     inputs[0].mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
                     SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
-                } else if (recvbuf[1] == '9') { // frame retransmit request
-                    int index = (uint8_t)(recvbuf[2]) * maxByteVal + (uint8_t)recvbuf[3];
-                        if (index < maxPacketCount) {
-                            retransMutex.lock();
-                            retransmits.erase(index);
-                            retransMutex.unlock();
+                }
+                else if (recvbuf[1] == '7' && iResult >= 4) { // frame retransmit request
+                    for (int i = 2; i < iResult; i += 2) {
+                        if (i + 1 < iResult) {
+                            int ind = (uint8_t)(recvbuf[i]) * maxByteVal + (uint8_t)(recvbuf[i + 1]);
+                            printDebugMessage("Retransmit " + to_string(ind) + "\n");
+                            if (ind < maxPacketCount) {
+                                stringstream send;
+                                send << (char)FRAMERETRANSMIT << recvbuf[i] << recvbuf[i+1];
+                                for (int i = 0; i < backupLens[ind]; i++) {
+                                    send << (char)(backupBuf[ind * 1400 + i]);
+                                }
+                                sendto(sock, send.str().c_str(), backupLens[ind] + 3, 0, (sockaddr*)&dest, sizeof(dest));
+                                retransmitRequest req;
+                                req.start = chrono::steady_clock::now();
+                                retransMutex.lock();
+                                retransmits.emplace(ind, req);
+                                retransMutex.unlock();
+                            }
                         }
+                    }
+                }
+                else if (recvbuf[1] == '9') { // frame retransmit request
+                    int index = (uint8_t)(recvbuf[2]) * maxByteVal + (uint8_t)recvbuf[3];
+                    if (index < maxPacketCount) {
+                        retransMutex.lock();
+                        retransmits.erase(index);
+                        retransMutex.unlock();
+                    }
                     printDebugMessage(to_string(index) + " acknowledged\n");
                 }
             } else {
-            index = (int)((uint8_t)(recvbuf[1]) * maxByteVal + (uint8_t)recvbuf[2]);
-            
-            memcpy(&inputBack[index * 30], &recvbuf[3], iResult - 3);
-            visited[index] = iResult - 3;
+                index = (int)((uint8_t)(recvbuf[1]) * maxByteVal + (uint8_t)recvbuf[2]);
+
+                memcpy(&inputBack[index * 30], &recvbuf[3], iResult - 3);
+                visited[index] = iResult - 3;
                 printDebugMessage(to_string(index) + " received\n");
-            if (recvbuf[0] == 1) {
-                auto match = find(unorderedPack.begin(), unorderedPack.end(), index);
-                if (match != unorderedPack.end()) {
-                    unorderedPack.erase(match);
-            } else {
-                    if (unorderedPack.size() > 0) {
-                        auto minVal = min_element(unorderedPack.begin(), unorderedPack.end());
-                        int unorderedDiff = min(abs(index - *minVal), maxPacketCount - abs(index - *minVal));
-                        if (unorderedDiff > 5 || unorderedPack.size() >= 5) {
-                            stringstream send;
-                            send << (char)INPUTREQIND;
-                            for (auto it = unorderedPack.begin(); it != unorderedPack.end(); it++) {
+
+                if (recvbuf[0] == 1) {
+                    auto match = find(unorderedPack.begin(), unorderedPack.end(), index);
+                    if (match != unorderedPack.end()) {
+                        unorderedPack.erase(match);
+                    } else {
+                        if (unorderedPack.size() > 0) {
+                            auto minVal = min_element(unorderedPack.begin(), unorderedPack.end());
+                            int unorderedDiff = min(abs(index - *minVal), maxPacketCount - abs(index - *minVal));
+                            if (unorderedDiff > 2 || unorderedPack.size() >= 2) {
+                                stringstream send;
+                                //send << (char)INPUTREQIND;
+                                for (auto it = unorderedPack.begin(); it != unorderedPack.end(); it++) {
                                     printDebugMessage(to_string(*it) + " asking for retransmit\n");
-                                send << (char)(*it / maxByteVal);
-                                send << (char)(*it % maxByteVal);
+                                    send << (char)(*it / maxByteVal);
+                                    send << (char)(*it % maxByteVal);
 
+                                }
+                                unorderedPack.clear();
+                                sendPacket(send.str(), INPUTREQIND);
                             }
-                            unorderedPack.clear();
-                            sendto(sock, send.str().c_str(), send.str().size() + 1, 0, (sockaddr*)&dest, sizeof(dest));
                         }
-                    }
-                    if ((prevIndex + 1) % maxPacketCount != index) {
-                        int diff = min(abs(index - prevIndex), maxPacketCount - abs(index - prevIndex));
+                        if ((prevIndex + 1) % maxPacketCount != index) {
+                            int diff = min(abs(index - prevIndex), maxPacketCount - abs(index - prevIndex));
 
-                        if (diff < 5) {
-                            string str = to_string(prevIndex) + " " + to_string(index) + "\n";
-                            wstring temp = wstring(str.begin(), str.end());
-                            OutputDebugString(temp.c_str());
-                            int smaller, bigger;
-                            if (diff == abs(index - prevIndex)) {
-                                smaller = prevIndex;
-                                bigger = index;
+                            if (diff < 2) {
+                                printDebugMessage(to_string(prevIndex) + " " + to_string(index) + "\n");
+                                int smaller, bigger;
+                                if (diff == abs(index - prevIndex)) {
+                                    smaller = prevIndex;
+                                    bigger = index;
+                                }
+                                else {
+                                    smaller = index;
+                                    bigger = prevIndex;
+                                }
+                                for (int i = smaller; i < bigger; i = (i + 1) % (maxPacketCount)) {
+                                    unorderedPack.push_back(i);
+                                }
                             }
                             else {
-                                smaller = index;
-                                bigger = prevIndex;
+                                printDebugMessage(to_string(prevIndex) + "\n" + to_string(index) + " missing\n");
+                                stringstream send;
+                                send << (char)(((prevIndex + 1) % maxPacketCount) / maxByteVal) << (char)(((prevIndex + 1) % maxPacketCount) % maxByteVal) << (char)(recvbuf[1]) << (char)(recvbuf[2]);
+                                sendPacket(send.str(), INPUTREQUEST);
                             }
-                            for (int i = smaller; i < bigger; i = (i + 1) % (maxPacketCount)) {
-                                unorderedPack.push_back(i);
+                        }
+
+                        prevIndex = index;
+                    }
+
+            } else if (recvbuf[0] == 2) {
+                    stringstream send;
+                    send << (char)ACKNOWLEDGE << recvbuf[1] << recvbuf[2];
+                    printDebugMessage("Sending acknowledgement" + to_string((uint8_t)recvbuf[1] * maxByteVal + (uint8_t)recvbuf[2]));
+                    sendto(sock, send.str().c_str(), send.str().size() + 1, 0, (sockaddr*)&dest, sizeof(dest));
+                }
+
+                while (visited[packetPos] != -1) {
+                    if (recvbuf[3] == '0' && iResult >= 5) {
+                        INPUT inputs[1] = {};
+                        inputs[0].type = INPUT_KEYBOARD;
+                        int command;
+                        try {
+                            command = stoi(recvbuf.substr(4, iResult - 4));
+                        }
+                        catch (const exception& e) {
+                            continue;
+                        }
+                        inputs[0].ki.wVk = getWinCommand(command);
+                        SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
+                    }
+                    else if (recvbuf[3] == '2' && iResult >= 5) {
+                        INPUT inputs[1] = {};
+                        inputs[0].type = INPUT_MOUSE;
+                        inputs[0].mi.dx = 0;
+                        inputs[0].mi.dy = 0;
+                        inputs[0].mi.dwFlags = MOUSEEVENTF_LEFTDOWN | MOUSEEVENTF_ABSOLUTE;
+                        SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
+                    }
+                    else if (recvbuf[3] == '3' && iResult >= 4) {
+                        INPUT inputs[1] = {};
+                        inputs[0].type = INPUT_MOUSE;
+                        inputs[0].mi.dx = 0;
+                        inputs[0].mi.dy = 0;
+                        inputs[0].mi.dwFlags = MOUSEEVENTF_RIGHTDOWN | MOUSEEVENTF_ABSOLUTE;
+                        SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
+                    }
+                    else if (recvbuf[3] == '4' && iResult >= 4) {
+                        INPUT inputs[1] = {};
+                        inputs[0].type = INPUT_MOUSE;
+                        inputs[0].mi.dx = 0;
+                        inputs[0].mi.dy = 0;
+                        inputs[0].mi.dwFlags = MOUSEEVENTF_LEFTUP | MOUSEEVENTF_ABSOLUTE;
+                        SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
+                    }
+                    else if (recvbuf[3] == '5' && iResult >= 4) {
+                        INPUT inputs[1] = {};
+                        inputs[0].type = INPUT_MOUSE;
+                        inputs[0].mi.dx = 0;
+                        inputs[0].mi.dy = 0;
+                        inputs[0].mi.dwFlags = MOUSEEVENTF_RIGHTUP | MOUSEEVENTF_ABSOLUTE;
+                        SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
+                    }
+                    else if (recvbuf[3] == '6' && iResult >= 5) {
+                        INPUT inputs[1] = {};
+                        inputs[0].type = INPUT_KEYBOARD;
+                        inputs[0].ki.dwFlags = KEYEVENTF_KEYUP;
+                        int command;
+                        try {
+                            command = stoi(recvbuf.substr(4, iResult - 4));
+                        }
+                        catch (const exception& e) {
+                            continue;
+                        }
+                        inputs[0].ki.wVk = getWinCommand(command);
+                        SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
+                    }
+                    
+                    else if (inputBack[packetPos * 30] == '8' && visited[packetPos] >= 5) { // frame retransmit request
+                        int sHigh = (uint8_t)inputBack[packetPos * 30 + 1];
+                        int sLow = (uint8_t)inputBack[packetPos * 30 + 2];
+                        int eHigh = (uint8_t)inputBack[packetPos * 30 + 3];
+                        int eLow = (uint8_t)inputBack[packetPos * 30 + 4];
+                        if (sHigh < 60 && eHigh < 60) {
+                            int beginning = sHigh * maxByteVal + sLow;
+                            int end = eHigh * maxByteVal + eLow;
+                            int smaller, bigger;
+                            int diff = min(abs(beginning - end), maxPacketCount - abs(beginning - end));
+                            if (diff == beginning - end || diff == maxPacketCount - (beginning - end)) {
+                                smaller = end;
+                                bigger = beginning;
+                            }
+                            else {
+                                smaller = beginning;
+                                bigger = end;
+                            }
+
+                            printDebugMessage(to_string(smaller) + " " + to_string(bigger) + " requested\n");
+                            for (int i = smaller; i != bigger; i = (i + 1) % maxPacketCount) {
+                                stringstream send;
+                                send << (char)FRAMERETRANSMIT << (char)(i / maxByteVal) << (char)(i % maxByteVal);
+                                for (int j = 0; j < backupLens[i]; j++) {
+                                    send << (char)(backupBuf[i * 1400 + j]);
+                                }
+                                iResult = sendto(sock, send.str().c_str(), backupLens[i] + 3, 0, (sockaddr*)&dest, sizeof(dest));
+                                retransmitRequest req;
+                                req.start = chrono::steady_clock::now();
+                                retransMutex.lock();
+                                retransmits.emplace(i, req);
+                                retransMutex.unlock();
                             }
                         }
                         else {
-                                printDebugMessage(to_string(prevIndex) + "\n" + to_string(index) + " missing\n");
-                            stringstream send;
-                            send << (char)INPUTREQUEST << (char)(((prevIndex + 1) % maxPacketCount) / maxByteVal) << (char)(((prevIndex + 1) % maxPacketCount) % maxByteVal) << (char)(recvbuf[1]) << (char)(recvbuf[2]);
-                                sendPacket(send.str(), INPUTREQUEST);
-                        }
-                    }
-                    
-                    prevIndex = index;
-                }
-                
-            } else if (recvbuf[0] == 2) {
-                stringstream send;
-                send << (char)ACKNOWLEDGE << recvbuf[1] << recvbuf[2];
-                    printDebugMessage("Sending acknowledgement" + to_string((uint8_t)recvbuf[1] * maxByteVal + (uint8_t)recvbuf[2]));
-                sendto(sock, send.str().c_str(), send.str().size() + 1, 0, (sockaddr*)&dest, sizeof(dest));
-            } 
-
-            while (visited[packetPos] != -1) {
-                if (recvbuf[3] == '0' && iResult >= 5) {
-                    INPUT inputs[1] = {};
-                    inputs[0].type = INPUT_KEYBOARD;
-                    int command;
-                    try {
-                        command = stoi(recvbuf.substr(4, iResult - 4));
-                    }
-                    catch (const exception& e) {
-                        continue;
-                    }
-                    inputs[0].ki.wVk = getWinCommand(command);
-                    SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
-                }
-                else if (recvbuf[3] == '2' && iResult >= 5) {
-                    INPUT inputs[1] = {};
-                    inputs[0].type = INPUT_MOUSE;
-                    inputs[0].mi.dx = 0;
-                    inputs[0].mi.dy = 0;
-                    inputs[0].mi.dwFlags = MOUSEEVENTF_LEFTDOWN | MOUSEEVENTF_ABSOLUTE;
-                    SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
-                }
-                else if (recvbuf[3] == '3' && iResult >= 4) {
-                    INPUT inputs[1] = {};
-                    inputs[0].type = INPUT_MOUSE;
-                    inputs[0].mi.dx = 0;
-                    inputs[0].mi.dy = 0;
-                    inputs[0].mi.dwFlags = MOUSEEVENTF_RIGHTDOWN | MOUSEEVENTF_ABSOLUTE;
-                    SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
-                }
-                else if (recvbuf[3] == '4' && iResult >= 4) {
-                    INPUT inputs[1] = {};
-                    inputs[0].type = INPUT_MOUSE;
-                    inputs[0].mi.dx = 0;
-                    inputs[0].mi.dy = 0;
-                    inputs[0].mi.dwFlags = MOUSEEVENTF_LEFTUP | MOUSEEVENTF_ABSOLUTE;
-                    SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
-                }
-                else if (recvbuf[3] == '5' && iResult >= 4) {
-                    INPUT inputs[1] = {};
-                    inputs[0].type = INPUT_MOUSE;
-                    inputs[0].mi.dx = 0;
-                    inputs[0].mi.dy = 0;
-                    inputs[0].mi.dwFlags = MOUSEEVENTF_RIGHTUP | MOUSEEVENTF_ABSOLUTE;
-                    SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
-                }
-                else if (recvbuf[3] == '6' && iResult >= 5) {
-                    INPUT inputs[1] = {};
-                    inputs[0].type = INPUT_KEYBOARD;
-                    inputs[0].ki.dwFlags = KEYEVENTF_KEYUP;
-                    int command;
-                    try {
-                        command = stoi(recvbuf.substr(4, iResult - 4));
-                    }
-                    catch (const exception& e) {
-                        continue;
-                    }
-                    inputs[0].ki.wVk = getWinCommand(command);
-                    SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
-                }
-                    else if (recvbuf[3] == '7' && iResult >= 6) { // frame retransmit request
-                        for (int i = 4; i < iResult; i += 2) {
-                            if (i + 1 < iResult) {
-                                index = (uint8_t)(recvbuf[i]) * maxByteVal + (uint8_t)(recvbuf[i + 1]);
-                                string str = "Retransmit " + to_string(index) + "\n";
-                                wstring temp = wstring(str.begin(), str.end());
-                                OutputDebugString(temp.c_str());
-                                if (index < maxPacketCount) {
-                                    retransmitRequest req;
-                                    req.start = chrono::steady_clock::now();
-                                    retransMutex.lock();
-                                    retransmits.emplace(index, req);
-                                    retransMutex.unlock();
-                                }
-                            }
-                        }
-                    }
-                else if (recvbuf[3] == '8' && iResult >= 8) { // frame retransmit request
-                        int sHigh, sLow, eHigh, eLow;
-                        if (iResult >= 8) {
-                            sHigh = (uint8_t)recvbuf[4];
-                            sLow = (uint8_t)recvbuf[5];
-                            eHigh = (uint8_t)recvbuf[6];
-                            eLow = (uint8_t)recvbuf[7];
-                            if (sHigh < 60 && eHigh < 60) {
-                                int beginning = sHigh * maxByteVal + sLow;
-                                int end = eHigh * maxByteVal + eLow;
-                                string str = to_string(beginning) + " " + to_string(end) + " requested\n";
-                                wstring temp = wstring(str.begin(), str.end());
-                                OutputDebugString(temp.c_str());
-                                for (int i = beginning; i != end; i = (i + 1) % maxPacketCount) {
-                                    retransmitRequest req;
-                                    req.start = chrono::steady_clock::now();
-                                    retransMutex.lock();
-                                    retransmits.emplace(i, req);
-                                    retransMutex.unlock();
-                                }
-                            }
-                            else {
-                                OutputDebugString(L"bad input received");
+                            OutputDebugString(L"bad input received");
                             string out = to_string(visited[packetPos]);
                             for (int i = 0; i < visited[packetPos]; i++) {
                                 out += to_string((uint8_t)inputBack[packetPos * 30 + i]) + " ";
                             }
                             printDebugMessage(out);
-                            }
                         }
+                    }
                     
                     visited[packetPos] = -1;
                     printDebugMessage("Packet pos visit: " + to_string(packetPos) + '\n');
-                packetPos++;
-                if (packetPos >= maxPacketCount) {
-                    packetPos = 0;
+                    packetPos++;
+                    if (packetPos >= maxPacketCount) {
+                        packetPos = 0;
+                    }
                 }
-            }            
+            }
+                                               
         }
-                                 
-    }
                                  
     }
     return 0;
@@ -1467,8 +1485,8 @@ DWORD WINAPI KeepAliveProc(_In_ void* Param) {
         if (haveClient) {
             iResult = sendto(sock, send.c_str(), send.length() + 1, 0, (sockaddr*)&dest, sizeof(dest));
         }
-            Sleep(200);
-        }
+        Sleep(200);
+    }
     return 0;
 }
 
