@@ -1118,6 +1118,7 @@ DWORD WINAPI DDProc(_In_ void* Param)
         {
             // Send frames to the transformer
             retransMutex.lock();
+            if (haveClient && retransmits.size() < 20) {
                 hr = DispMgr.WriteFrame(SharedSurf, &needFlush, &outBuffer);
                
                 if (SUCCEEDED(hr)) {
