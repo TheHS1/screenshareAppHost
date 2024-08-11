@@ -151,33 +151,33 @@
     </Manifest>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="DesktopDuplication.cpp">
+    <ClCompile Include="src\DesktopDuplication.cpp">
       <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">$(OutDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">$(OutDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(OutDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(OutDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
-    <ClCompile Include="DisplayManager.cpp" />
-    <ClCompile Include="DuplicationManager.cpp" />
-    <ClCompile Include="H264Encoder2.cpp" />
-    <ClCompile Include="OutputManager.cpp" />
-    <ClCompile Include="Preproc.cpp" />
-    <ClCompile Include="ThreadManager.cpp" />
+    <ClCompile Include="src\DisplayManager.cpp" />
+    <ClCompile Include="src\DuplicationManager.cpp" />
+    <ClCompile Include="src\H264Encoder2.cpp" />
+    <ClCompile Include="src\OutputManager.cpp" />
+    <ClCompile Include="src\Preproc.cpp" />
+    <ClCompile Include="src\ThreadManager.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="CommonTypes.h" />
-    <ClInclude Include="Defs.h" />
-    <ClInclude Include="DisplayManager.h" />
-    <ClInclude Include="DuplicationManager.h" />
-    <ClInclude Include="H264Encoder2.h" />
-    <ClInclude Include="OutputManager.h" />
-    <ClInclude Include="Preproc.h" />
-    <ClInclude Include="SDL_keycode.h" />
-    <ClInclude Include="SDL_scancode.h" />
-    <ClInclude Include="ThreadManager.h" />
+    <ClInclude Include="src\CommonTypes.h" />
+    <ClInclude Include="src\Defs.h" />
+    <ClInclude Include="src\DisplayManager.h" />
+    <ClInclude Include="src\DuplicationManager.h" />
+    <ClInclude Include="src\H264Encoder2.h" />
+    <ClInclude Include="src\OutputManager.h" />
+    <ClInclude Include="src\Preproc.h" />
+    <ClInclude Include="src\SDL_keycode.h" />
+    <ClInclude Include="src\SDL_scancode.h" />
+    <ClInclude Include="src\ThreadManager.h" />
   </ItemGroup>
   <ItemGroup>
-    <FxCompile Include="PixelShader.hlsl">
+    <FxCompile Include="src\PixelShader.hlsl">
       <EntryPointName Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">PS</EntryPointName>
       <EntryPointName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">PS</EntryPointName>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Pixel</ShaderType>
@@ -203,7 +203,7 @@
       <ObjectFileOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
       </ObjectFileOutput>
     </FxCompile>
-    <FxCompile Include="VertexShader.hlsl">
+    <FxCompile Include="src\VertexShader.hlsl">
       <EntryPointName Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">VS</EntryPointName>
       <EntryPointName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">VS</EntryPointName>
       <ShaderModel Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">4.0_level_9_1</ShaderModel>
