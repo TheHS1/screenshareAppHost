@@ -8,46 +8,51 @@
 
 #define WIN32_LEAN_AND_MEAN //inside windows.h winsock.h include is ommitted
 //winsock api add ons
+#include <mfapi.h>
 #include <windows.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <winuser.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <mutex>
-#include <thread>
+
 
 // Need to link with Ws2_32.lib, Mswsock.lib, and Advapi32.lib
 #pragma comment (lib, "Ws2_32.lib")
 #pragma comment (lib, "Mswsock.lib")
 #pragma comment (lib, "AdvApi32.lib")
 
-#define DEFAULT_PORT 3478
-
-#include "DisplayManager.h"
-#include "DuplicationManager.h"
-#include "H264Encoder2.h"
-#include "Preproc.h"
-#include "OutputManager.h"
-#include "ThreadManager.h"
-#include "SDL_keycode.h"
-#include <chrono>
-#include <fstream>
-#include <mfapi.h>
-#include <string>
-#include <sstream>
-#include <vector>
-
+// mfapi links
 #pragma comment(lib, "mfplat")
 #pragma comment(lib, "mfuuid")
 
+#include <chrono>
+#include <fstream>
+#include <mutex>
+#include <openssl/rand.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <sstream>
+#include <string>
+#include <thread>
+#include <vector>
+
+#include "DisplayManager.h"
+#include "DuplicationManager.h"
+#include "EncryptionManager.h"
+#include "H264Encoder2.h"
+#include "OutputManager.h"
+#include "Preproc.h"
+#include "SDL_keycode.h"
+#include "ThreadManager.h"
+
+
+#define DEFAULT_PORT 3478
 #define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12)
 
 // byte constants
 #define maxByteVal 256
 constexpr auto maxPacketCount = 256 * 60;
 
-// gui window identifiers
+// gui window identifiers and handlers
 #define ddID 2
 #define dconnID 3
 #define connID 4
@@ -58,6 +63,7 @@ HWND ddhndl, mainhndl, dconbutton, conbutton, conStatus;
 // Globals
 //
 OUTPUTMANAGER OutMgr;
+EncryptionManager EncMgr;
 RECT WindowRect = { 0, 0, 800, 600 };
 
 WSADATA wsaData;
@@ -550,7 +556,7 @@ void sendPacket(string toSend, packetType type) {
         printDebugMessage("Sending input request with index " + to_string(hpCount * maxByteVal + lpCount));
     }
 
-    memcpy(&backupBuf[(hpCount * maxByteVal + lpCount) * 1400], toSend.c_str(), toSend.length());
+    memcpy(&backupBuf[(hpCount * maxByteVal + lpCount) * 1450], toSend.c_str(), toSend.length());
     backupLens[hpCount * maxByteVal + lpCount] = toSend.length();
 
     int iResult = sendto(sock, send.str().c_str(), send.str().length(), 0, (sockaddr*)&dest, sizeof(dest));
@@ -630,6 +636,18 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
     //set timeout for select
     tv.tv_sec = 5;
     tv.tv_usec = 0;
+
+
+    // 8 bytes of salt data
+    unsigned int salt[] = { 12345, 54321 };
+    string key_data;
+    /*key_data.resize(32);
+    if (!RAND_bytes((unsigned char*) &key_data, 32)) {
+        DisplayMsg(L"Error generating encryption key", L"Key generation failed", E_FAIL);
+    }*/
+    key_data = "2B28AB097EAEF7CF15D2154F16A6883C";
+
+    EncMgr.Init(key_data, (unsigned char*)&salt);
 
     // Register class
     WNDCLASSEXW Wc;
@@ -1126,15 +1144,15 @@ DWORD WINAPI DDProc(_In_ void* Param)
                
                 if (SUCCEEDED(hr)) {
                     outBuffer->Lock(&data, NULL, &length);
-                    int count = length;
-                    while (count > 0) {
-                        stringstream send;
-                        int nextSub = min(count, 1400);
-                        for (int i = 0; i < nextSub; i++) {
-                            send << data[length - count + i];
-                        }
-                        sendPacket(send.str(), FRAME);
-                        count -= nextSub;
+
+                    // convert BYTE* data to string
+                    string dataStr (reinterpret_cast<char*>(data), length);
+
+                    // Split frame data in 1400 byte encrypted chunks
+                    // Limited amount of data can be stuffed into UDP packet
+                    for (int i = 0; i < dataStr.length(); i += 1400) {
+                        string ciphertext = EncMgr.aes_encrypt(dataStr.substr(i, 1400));
+                        sendPacket(ciphertext, FRAME);
                         }
 
                     outBuffer->Unlock();
@@ -1275,7 +1293,7 @@ DWORD WINAPI InputProc(_In_ void* Param)
                                 stringstream send;
                                 send << (char)FRAMERETRANSMIT << recvbuf[i] << recvbuf[i+1];
                                 for (int i = 0; i < backupLens[ind]; i++) {
-                                    send << (char)(backupBuf[ind * 1400 + i]);
+                                    send << (char)(backupBuf[ind * 1450 + i]);
                                 }
                                 sendto(sock, send.str().c_str(), backupLens[ind] + 3, 0, (sockaddr*)&dest, sizeof(dest));
                                 retransmitRequest req;
@@ -1445,7 +1463,7 @@ DWORD WINAPI InputProc(_In_ void* Param)
                                 stringstream send;
                                 send << (char)FRAMERETRANSMIT << (char)(i / maxByteVal) << (char)(i % maxByteVal);
                                 for (int j = 0; j < backupLens[i]; j++) {
-                                    send << (char)(backupBuf[i * 1400 + j]);
+                                    send << (char)(backupBuf[i * 1450 + j]);
                                 }
                                 iResult = sendto(sock, send.str().c_str(), backupLens[i] + 3, 0, (sockaddr*)&dest, sizeof(dest));
                                     retransmitRequest req;
@@ -1518,7 +1536,7 @@ DWORD WINAPI HandleRetransmitsProc(_In_ void* Param) {
                     stringstream send;
                     send << (char) FRAMERETRANSMIT << (char)(it->first / maxByteVal) << (char)(it->first % maxByteVal); 
                     for (int i = 0; i < backupLens[it->first]; i++) {
-                        send << (char)(backupBuf[it->first * 1400 + i]);
+                        send << (char)(backupBuf[it->first * 1450 + i]);
                     }
                     iResult = sendto(sock, send.str().c_str(), backupLens[it->first] + 3, 0, (sockaddr*)&dest, sizeof(dest));
                     it->second.elapsed = retransmitTimeout;

@@ -100,12 +100,13 @@
       <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
       <Optimization>Disabled</Optimization>
-      <AdditionalIncludeDirectories>$(OutDir)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(OutDir); C:\Program Files\OpenSSL-Win64\include</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Windows</SubSystem>
-      <AdditionalDependencies>d3d11.lib;dxgi.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>d3d11.lib;dxgi.lib;C:\Program Files\OpenSSL-Win64\lib\VC\x64\MT\libssl.lib;C:\Program Files\OpenSSL-Win64\lib\VC\x64\MT\libcrypto.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>C:\Program Files\OpenSSL-Win64\lib</AdditionalLibraryDirectories>
     </Link>
     <Manifest>
       <EnableDpiAwareness>true</EnableDpiAwareness>
@@ -159,6 +160,7 @@
     </ClCompile>
     <ClCompile Include="src\DisplayManager.cpp" />
     <ClCompile Include="src\DuplicationManager.cpp" />
+    <ClCompile Include="src\EncryptionManager.cpp" />
     <ClCompile Include="src\H264Encoder2.cpp" />
     <ClCompile Include="src\OutputManager.cpp" />
     <ClCompile Include="src\Preproc.cpp" />
@@ -169,6 +171,7 @@
     <ClInclude Include="src\Defs.h" />
     <ClInclude Include="src\DisplayManager.h" />
     <ClInclude Include="src\DuplicationManager.h" />
+    <ClInclude Include="src\EncryptionManager.h" />
     <ClInclude Include="src\H264Encoder2.h" />
     <ClInclude Include="src\OutputManager.h" />
     <ClInclude Include="src\Preproc.h" />
